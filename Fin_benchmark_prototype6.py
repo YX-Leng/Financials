@@ -124,60 +124,63 @@ def render_ui():
     # --- Sidebar: User Inputs ---
     st.sidebar.header("Company Input")
 
-    # --- Company name input (text or selectbox for better UX) ---
-    company_names = sorted(company_df['Company Name'].unique())
-    company_name = st.sidebar.selectbox("Company Name", [""] + company_names)
+    # --- Free-typed company name (not restricted to list) ---
+    company_name = st.sidebar.text_input("Company Name")
 
-    # --- Financial year selection (filtered by company if selected) ---
+    # --- Financial year selection (filter to available years if the company exists) ---
+    ALL_YEARS = [2021, 2022, 2023, 2024, 2025]
     if company_name:
-        available_years = sorted(company_df[company_df['Company Name'] == company_name]['Financial Year'].unique())
+        # Case-insensitive match against known companies
+        cmp_mask = company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
+        if cmp_mask.any():
+            available_years = sorted(company_df.loc[cmp_mask, 'Financial Year'].unique())
+            # Fallback if the data has no year entries for this name yet
+            if len(available_years) == 0:
+                available_years = ALL_YEARS
+        else:
+            # Unknown company: show all years
+            available_years = ALL_YEARS
     else:
-        available_years = [2021, 2022, 2023, 2024, 2025]
+        available_years = ALL_YEARS
+
     financial_year = st.sidebar.selectbox("Financial Year", available_years)
 
-    # --- Auto-populate fields if both company and year are selected and exist in data ---
-    if company_name and financial_year:
-        mask = (company_df['Company Name'] == company_name) & (company_df['Financial Year'] == financial_year)
-        if mask.any():
-            row = company_df[mask].iloc[0]
-            default_industry = row['Industry']
-            default_current_assets = str(row['Current Assets'])
-            default_current_liabilities = str(row['Current Liabilities'])
-            default_inventory = str(row['Inventory'])
-            default_operating_cf = str(row['Operating Cash Flow'])
-            default_capex = str(row['Capital Expenditure'])
-            default_revenue = str(row['Revenue'])
-            default_ebitda = str(row['EBITDA'])
-            default_cost_of_revenue = str(row['Cost of Revenue'])
-        else:
-            default_industry = None
-            default_current_assets = ""
-            default_current_liabilities = ""
-            default_inventory = ""
-            default_operating_cf = ""
-            default_capex = ""
-            default_revenue = ""
-            default_ebitda = ""
-            default_cost_of_revenue = ""
-    else:
-        default_industry = None
-        default_current_assets = ""
-        default_current_liabilities = ""
-        default_inventory = ""
-        default_operating_cf = ""
-        default_capex = ""
-        default_revenue = ""
-        default_ebitda = ""
-        default_cost_of_revenue = ""
+    # --- Auto-populate if the typed name + year exists in data ---
+    default_industry = None
+    default_current_assets = ""
+    default_current_liabilities = ""
+    default_inventory = ""
+    default_operating_cf = ""
+    default_capex = ""
+    default_revenue = ""
+    default_ebitda = ""
+    default_cost_of_revenue = ""
 
-    # --- Industry selection (auto-populated if possible) ---
+    if company_name and financial_year:
+        mask_name = company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
+        mask_year = company_df['Financial Year'] == financial_year
+        mask = mask_name & mask_year
+        if mask.any():
+            row = company_df.loc[mask].iloc[0]
+            default_industry = row.get('Industry', None)
+            default_current_assets = str(row.get('Current Assets', "") or "")
+            default_current_liabilities = str(row.get('Current Liabilities', "") or "")
+            default_inventory = str(row.get('Inventory', "") or "")
+            default_operating_cf = str(row.get('Operating Cash Flow', "") or "")
+            default_capex = str(row.get('Capital Expenditure', "") or "")
+            default_revenue = str(row.get('Revenue', "") or "")
+            default_ebitda = str(row.get('EBITDA', "") or "")
+            default_cost_of_revenue = str(row.get('Cost of Revenue', "") or "")
+
+    # --- Industry selection (auto-set if found, else pick first) ---
     industry_list = sorted(industry_agg['Industry'].unique())
     industry = st.sidebar.selectbox(
-        "Industry", industry_list,
-        index=industry_list.index(default_industry) if default_industry in industry_list else 0
+        "Industry",
+        industry_list,
+        index=(industry_list.index(default_industry) if default_industry in industry_list else 0)
     )
 
-    # --- Financial fields (auto-populated if possible) ---
+    # --- Financial fields (auto-populated if a match was found; otherwise blank) ---
     current_assets = st.sidebar.text_input("Current Assets (SGD)", value=default_current_assets)
     current_liabilities = st.sidebar.text_input("Current Liabilities (SGD)", value=default_current_liabilities)
     inventory = st.sidebar.text_input("Inventory (SGD)", value=default_inventory)
@@ -188,8 +191,11 @@ def render_ui():
     cost_of_revenue = st.sidebar.text_input("Cost of Revenue (SGD)", value=default_cost_of_revenue)
 
     def is_number(x):
-        try: float(x); return True
-        except: return False
+        try:
+            float(x)
+            return True
+        except:
+            return False
 
     all_filled = all([
         company_name.strip(),
@@ -202,9 +208,11 @@ def render_ui():
         is_number(operating_cf), is_number(capex), is_number(revenue),
         is_number(ebitda), is_number(cost_of_revenue)
     ])
+
     submit = st.sidebar.button("Submit", disabled=not all_filled)
     if not all_filled:
         st.sidebar.warning("Please complete all fields with valid numbers before submitting.")
+
 
 
     # --- Helpers ---
