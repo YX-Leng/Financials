@@ -122,23 +122,37 @@ def render_ui():
 
 
     # --- Sidebar: User Inputs ---
+    
     st.sidebar.header("Company Input")
 
-    # --- Free-typed company name (not restricted to list) ---
+    # --- Free-typed company name ---
+    company_names = sorted(company_df['Company Name'].unique())
     company_name = st.sidebar.text_input("Company Name")
 
-    # --- Financial year selection (filter to available years if the company exists) ---
+    # --- Suggestion logic (case-insensitive, partial match) ---
+    suggestions = []
+    if company_name.strip():
+        suggestions = [
+            name for name in company_names
+            if company_name.strip().lower() in name.lower()
+        ][:5]  # Show up to 5 suggestions
+
+        if suggestions and company_name.strip().lower() not in [n.lower() for n in suggestions]:
+            st.sidebar.caption("Suggestions:")
+            for suggestion in suggestions:
+                # Use a button for each suggestion
+                if st.sidebar.button(f"→ {suggestion}"):
+                    company_name = suggestion  # This will update the variable for the next rerun
+
+    # --- Financial year selection (filtered by company if selected) ---
     ALL_YEARS = [2021, 2022, 2023, 2024, 2025]
     if company_name:
-        # Case-insensitive match against known companies
         cmp_mask = company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
         if cmp_mask.any():
             available_years = sorted(company_df.loc[cmp_mask, 'Financial Year'].unique())
-            # Fallback if the data has no year entries for this name yet
             if len(available_years) == 0:
                 available_years = ALL_YEARS
         else:
-            # Unknown company: show all years
             available_years = ALL_YEARS
     else:
         available_years = ALL_YEARS
@@ -172,7 +186,6 @@ def render_ui():
             default_ebitda = str(row.get('EBITDA', "") or "")
             default_cost_of_revenue = str(row.get('Cost of Revenue', "") or "")
 
-    # --- Industry selection (auto-set if found, else pick first) ---
     industry_list = sorted(industry_agg['Industry'].unique())
     industry = st.sidebar.selectbox(
         "Industry",
@@ -180,7 +193,6 @@ def render_ui():
         index=(industry_list.index(default_industry) if default_industry in industry_list else 0)
     )
 
-    # --- Financial fields (auto-populated if a match was found; otherwise blank) ---
     current_assets = st.sidebar.text_input("Current Assets (SGD)", value=default_current_assets)
     current_liabilities = st.sidebar.text_input("Current Liabilities (SGD)", value=default_current_liabilities)
     inventory = st.sidebar.text_input("Inventory (SGD)", value=default_inventory)
@@ -212,8 +224,6 @@ def render_ui():
     submit = st.sidebar.button("Submit", disabled=not all_filled)
     if not all_filled:
         st.sidebar.warning("Please complete all fields with valid numbers before submitting.")
-
-
 
     # --- Helpers ---
     def fmt(metric, v):
