@@ -104,8 +104,7 @@ def render_ui():
     # --- Load Data ---
     @st.cache_data
     def load_data():
-        file_path = "Company_Financials_By_FY.xlsx"
-        file = pd.read_excel(file_path)
+        file = pd.read_excel("Company_Financials_By_FY.xlsx")
         industry_agg = pd.read_excel(file, sheet_name="IndustryAggregatesRatios")
         analysis = pd.read_excel(file, sheet_name="Analysis")
         return industry_agg, analysis
