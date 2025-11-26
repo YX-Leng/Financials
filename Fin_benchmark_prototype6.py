@@ -122,14 +122,13 @@ def render_ui():
 
 
     # --- Sidebar: User Inputs ---
-    
     st.sidebar.header("Company Input")
 
-    # --- Free-typed company name ---
+    # --- Free-typed company name (not restricted to list) ---
     company_names = sorted(company_df['Company Name'].unique())
     company_name = st.sidebar.text_input("Company Name")
 
-    # --- Suggestion logic (case-insensitive, partial match) ---
+    # --- Suggestion logic (case-insensitive, partial match, not clickable) ---
     suggestions = []
     if company_name.strip():
         suggestions = [
@@ -138,11 +137,7 @@ def render_ui():
         ][:5]  # Show up to 5 suggestions
 
         if suggestions and company_name.strip().lower() not in [n.lower() for n in suggestions]:
-            st.sidebar.caption("Suggestions:")
-            for suggestion in suggestions:
-                # Use a button for each suggestion
-                if st.sidebar.button(f"→ {suggestion}"):
-                    company_name = suggestion  # This will update the variable for the next rerun
+            st.sidebar.caption("Suggestions: " + ", ".join(suggestions))
 
     # --- Financial year selection (filtered by company if selected) ---
     ALL_YEARS = [2021, 2022, 2023, 2024, 2025]
@@ -224,6 +219,7 @@ def render_ui():
     submit = st.sidebar.button("Submit", disabled=not all_filled)
     if not all_filled:
         st.sidebar.warning("Please complete all fields with valid numbers before submitting.")
+
 
     # --- Helpers ---
     def fmt(metric, v):
