@@ -112,20 +112,80 @@ def render_ui():
 
     industry_agg, analysis = load_data()
 
+    @st.cache_data
+    def load_company_data():
+        # Adjust sheet name as needed
+        df = pd.read_excel("Company_Financials_By_FY.xlsx", sheet_name="filtered")
+        return df
+
+    company_df = load_company_data()
+
+
     # --- Sidebar: User Inputs ---
     st.sidebar.header("Company Input")
-    company_name = st.sidebar.text_input("Company Name")
-    financial_year = st.sidebar.selectbox("Financial Year", [2021, 2022, 2023, 2024, 2025])
+
+    # --- Company name input (text or selectbox for better UX) ---
+    company_names = sorted(company_df['Company Name'].unique())
+    company_name = st.sidebar.selectbox("Company Name", [""] + company_names)
+
+    # --- Financial year selection (filtered by company if selected) ---
+    if company_name:
+        available_years = sorted(company_df[company_df['Company Name'] == company_name]['Financial Year'].unique())
+    else:
+        available_years = [2021, 2022, 2023, 2024, 2025]
+    financial_year = st.sidebar.selectbox("Financial Year", available_years)
+
+    # --- Auto-populate fields if both company and year are selected and exist in data ---
+    if company_name and financial_year:
+        mask = (company_df['Company Name'] == company_name) & (company_df['Financial Year'] == financial_year)
+        if mask.any():
+            row = company_df[mask].iloc[0]
+            default_industry = row['Industry']
+            default_current_assets = str(row['Current Assets'])
+            default_current_liabilities = str(row['Current Liabilities'])
+            default_inventory = str(row['Inventory'])
+            default_operating_cf = str(row['Operating Cash Flow'])
+            default_capex = str(row['Capital Expenditure'])
+            default_revenue = str(row['Revenue'])
+            default_ebitda = str(row['EBITDA'])
+            default_cost_of_revenue = str(row['Cost of Revenue'])
+        else:
+            default_industry = None
+            default_current_assets = ""
+            default_current_liabilities = ""
+            default_inventory = ""
+            default_operating_cf = ""
+            default_capex = ""
+            default_revenue = ""
+            default_ebitda = ""
+            default_cost_of_revenue = ""
+    else:
+        default_industry = None
+        default_current_assets = ""
+        default_current_liabilities = ""
+        default_inventory = ""
+        default_operating_cf = ""
+        default_capex = ""
+        default_revenue = ""
+        default_ebitda = ""
+        default_cost_of_revenue = ""
+
+    # --- Industry selection (auto-populated if possible) ---
     industry_list = sorted(industry_agg['Industry'].unique())
-    industry = st.sidebar.selectbox("Industry", industry_list)
-    current_assets = st.sidebar.text_input("Current Assets (SGD)")
-    current_liabilities = st.sidebar.text_input("Current Liabilities (SGD)")
-    inventory = st.sidebar.text_input("Inventory (SGD)")
-    operating_cf = st.sidebar.text_input("Operating Cash Flow (SGD)")
-    capex = st.sidebar.text_input("Capital Expenditure (SGD)")
-    revenue = st.sidebar.text_input("Revenue (SGD)")
-    ebitda = st.sidebar.text_input("EBITDA (SGD)")
-    cost_of_revenue = st.sidebar.text_input("Cost of Revenue (SGD)")
+    industry = st.sidebar.selectbox(
+        "Industry", industry_list,
+        index=industry_list.index(default_industry) if default_industry in industry_list else 0
+    )
+
+    # --- Financial fields (auto-populated if possible) ---
+    current_assets = st.sidebar.text_input("Current Assets (SGD)", value=default_current_assets)
+    current_liabilities = st.sidebar.text_input("Current Liabilities (SGD)", value=default_current_liabilities)
+    inventory = st.sidebar.text_input("Inventory (SGD)", value=default_inventory)
+    operating_cf = st.sidebar.text_input("Operating Cash Flow (SGD)", value=default_operating_cf)
+    capex = st.sidebar.text_input("Capital Expenditure (SGD)", value=default_capex)
+    revenue = st.sidebar.text_input("Revenue (SGD)", value=default_revenue)
+    ebitda = st.sidebar.text_input("EBITDA (SGD)", value=default_ebitda)
+    cost_of_revenue = st.sidebar.text_input("Cost of Revenue (SGD)", value=default_cost_of_revenue)
 
     def is_number(x):
         try: float(x); return True
@@ -145,6 +205,7 @@ def render_ui():
     submit = st.sidebar.button("Submit", disabled=not all_filled)
     if not all_filled:
         st.sidebar.warning("Please complete all fields with valid numbers before submitting.")
+
 
     # --- Helpers ---
     def fmt(metric, v):
