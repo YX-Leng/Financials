@@ -224,18 +224,18 @@ def render_ui():
         if metric == "Days Inventory on Hand":
             # Reverse logic: p25 = green (good), p75 = red (bad)
             fig.add_shape(type="rect", x0=x_min, x1=p25, y0=0, y1=1,
-                          fillcolor="#def7e5", opacity=0.55, line_width=0)   # Green
+                          fillcolor="#def7e5", opacity=0.25, line_width=0)   # Green
             fig.add_shape(type="rect", x0=p25, x1=p75, y0=0, y1=1,
-                          fillcolor="#fff3cd", opacity=0.55, line_width=0)   # Amber
+                          fillcolor="#fff3cd", opacity=0.25, line_width=0)   # Amber
             fig.add_shape(type="rect", x0=p75, x1=x_max, y0=0, y1=1,
-                          fillcolor="#fde2e4", opacity=0.55, line_width=0)   # Red
+                          fillcolor="#fde2e4", opacity=0.25, line_width=0)   # Red
         else:
             fig.add_shape(type="rect", x0=x_min, x1=p25, y0=0, y1=1,
-                          fillcolor="#fde2e4", opacity=0.55, line_width=0)   # Red
+                          fillcolor="#fde2e4", opacity=0.25, line_width=0)   # Red
             fig.add_shape(type="rect", x0=p25, x1=p75, y0=0, y1=1,
-                          fillcolor="#fff3cd", opacity=0.55, line_width=0)   # Amber
+                          fillcolor="#fff3cd", opacity=0.25, line_width=0)   # Amber
             fig.add_shape(type="rect", x0=p75, x1=x_max, y0=0, y1=1,
-                          fillcolor="#def7e5", opacity=0.55, line_width=0)   # Green
+                          fillcolor="#def7e5", opacity=0.25, line_width=0)   # Green
         # Company marker
         fig.add_vline(x=value, line_width=3, line_color="#1d4ed8",
                       annotation_text="Company", annotation_position="top right")
