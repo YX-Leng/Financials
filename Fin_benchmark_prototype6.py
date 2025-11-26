@@ -103,11 +103,13 @@ def render_ui():
 
     # --- Load Data ---
     @st.cache_data
+
     def load_data():
-        file = pd.read_excel("Company_Financials_By_FY.xlsx")
-        industry_agg = pd.read_excel(file, sheet_name="IndustryAggregatesRatios")
-        analysis = pd.read_excel(file, sheet_name="Analysis")
+        sheets = pd.read_excel("Company_Financials_By_FY.xlsx", sheet_name=None)  # returns dict of DataFrames
+        industry_agg = sheets["IndustryAggregatesRatios"]
+        analysis = sheets["Analysis"]
         return industry_agg, analysis
+
     industry_agg, analysis = load_data()
 
     # --- Sidebar: User Inputs ---
