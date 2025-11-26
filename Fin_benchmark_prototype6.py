@@ -104,7 +104,8 @@ def render_ui():
     # --- Load Data ---
     @st.cache_data
     def load_data():
-        file = r"C:\Users\yi-xiu.leng\OneDrive - Forvis Mazars\Documents\00. Digital Transformation\Madman\Financials\Company_Financials_By_FY (working).xlsx"
+        file_path = "Company_Financials_By_FY.xlsx"
+        file = pd.read_excel(file_path)
         industry_agg = pd.read_excel(file, sheet_name="IndustryAggregatesRatios")
         analysis = pd.read_excel(file, sheet_name="Analysis")
         return industry_agg, analysis
