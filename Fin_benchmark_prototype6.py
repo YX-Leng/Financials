@@ -790,12 +790,12 @@ def render_ui():
             import os
             col1, col2 = st.columns([2, 1])
             with col1:
-                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4.1"))
             with col2:
                 temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
 
             # Generate suggestions
-            generate = st.button("Generate AI Audit Suggestions", type="primary")
+            generate = st.button("Generate Audit Suggestions", type="primary")
             if generate:
                 api_key_for_call = get_openai_api_key()
                 if not api_key_for_call:
