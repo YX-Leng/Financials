@@ -258,9 +258,9 @@ def render_ui():
 
     def chip_color_by_direction(pct, direction, metric=None):
         mapping = {
-            "Good": "chip-green",
-            "Average": "chip-amber",
-            "Bad": "chip-red"
+            "Healthy": "chip-green",
+            "Satisfactory": "chip-amber",
+            "Needs Improvement": "chip-red"
         }
         return mapping.get(pct, "chip-amber")
 
