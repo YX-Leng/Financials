@@ -345,45 +345,138 @@ def render_ui():
             columns={p25_col: 'p25', p50_col: 'p50', p75_col: 'p75'}
         ).sort_values('Financial Year')
         return df
+    
+    def get_company_yoy(company_df, company_name, metric):
+        """
+        Returns a DataFrame with the company's metric values by Financial Year
+        for the given metric name, if those columns exist and data is available.
+        Expected columns in company_df:
+        - 'Company Name', 'Financial Year'
+        - Metric-specific raw columns needed to compute the value
+            OR a direct metric column (if your dataset already has it).
+        """
+        # We will compute the same metric formulas used in calculate_metrics(),
+        # but per row/year for the chosen company.
+        needed_cols = {
+            "Current Ratio": ["Current Assets", "Current Liabilities"],
+            "Quick Ratio": ["Current Assets", "Current Liabilities", "Inventory"],
+            "EBITDA Margin": ["EBITDA", "Revenue"],
+            "Gross Margin": ["Revenue", "Cost of Revenue"],
+            "Days Inventory on Hand": ["Inventory", "Cost of Revenue"],
+            "FCF Margin": ["Operating Cash Flow", "Capital Expenditure", "Revenue"],
+            "NWC Margin": ["Current Assets", "Current Liabilities", "Revenue"],
+        }
 
-    def plot_yoy_trend(df, metric, company_year=None, company_value=None):
+        cols = needed_cols.get(metric, [])
+        # If any required column is missing in company_df, return None
+        if not all(c in company_df.columns for c in cols):
+            return None
+
+        df = company_df[
+            company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
+        ].copy()
+
+        if df.empty:
+            return None
+
+        # Keep only years we care about and sort
+        df = df[df['Financial Year'].isin([2021, 2022, 2023, 2024, 2025])].copy()
+        if df.empty:
+            return None
+
+        # Compute metric per row
+        import numpy as np
+
+        def safe_div(a, b):
+            try:
+                return np.where(b != 0, a / b, np.nan)
+            except Exception:
+                return np.nan
+
+        if metric == "Current Ratio":
+            df['_val'] = safe_div(df["Current Assets"], df["Current Liabilities"])
+
+        elif metric == "Quick Ratio":
+            df['_val'] = safe_div(df["Current Assets"] - df["Inventory"], df["Current Liabilities"])
+
+        elif metric == "EBITDA Margin":
+            df['_val'] = safe_div(df["EBITDA"], df["Revenue"])
+
+        elif metric == "Gross Margin":
+            df['_val'] = safe_div(df["Revenue"] - df["Cost of Revenue"], df["Revenue"])
+
+        elif metric == "Days Inventory on Hand":
+            df['_val'] = safe_div(df["Inventory"], df["Cost of Revenue"]) * 365
+
+        elif metric == "FCF Margin":
+            df['_val'] = safe_div(df["Operating Cash Flow"] - df["Capital Expenditure"], df["Revenue"])
+
+        elif metric == "NWC Margin":
+            df['_val'] = safe_div(df["Current Assets"] - df["Current Liabilities"], df["Revenue"])
+
+        # Prepare final shape
+        df = df[["Financial Year", "_val"]].dropna().sort_values("Financial Year")
+        if df.empty:
+            return None
+
+        df["YearText"] = df["Financial Year"].astype(str)
+        df = df.rename(columns={"_val": "CompanyValue"})
+        return df
+
+    
+    def plot_yoy_trend(df, metric, company_year=None, company_value=None, df_company=None):
         fig = go.Figure()
         if df is None or df.empty:
             fig.update_layout(title=f"{metric} YoY Benchmark (no percentile columns found)", height=240)
             return fig
-        # Use categorical x-axis to avoid fractional positions
+
+        # Industry percentiles
         if metric == "Days Inventory on Hand":
-            # p25 = green (good), p50 = amber, p75 = red (bad)
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p25'], name='p25', line=dict(color='green')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p50'], name='p50', line=dict(color='orange', dash='dot')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p75'], name='p75', line=dict(color='red')))
         else:
-            # p25 = orange, p50 = red, p75 = green
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p25'], name='p25', line=dict(color='orange')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p50'], name='p50', line=dict(color='red', dash='dot')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p75'], name='p75', line=dict(color='green')))
+
+        # Company YoY line (if available)
+        if df_company is not None and not df_company.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_company["YearText"],
+                    y=df_company["CompanyValue"],
+                    name='Company (YoY)',
+                    mode='lines+markers',
+                    line=dict(color='blue', width=3),
+                    marker=dict(size=8, color='blue')
+                )
+            )
+
+        # Keep your single-year blue dot marker
         if company_year is not None and company_value is not None:
-            fig.add_trace(go.Scatter(
-                x=[str(company_year)], y=[company_value],
-                name='Company', mode='markers',
-                marker=dict(size=10, color='blue')
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=[str(company_year)], y=[company_value],
+                    name='Company (Selected Year)',
+                    mode='markers',
+                    marker=dict(size=10, color='blue', symbol='diamond')
+                )
+            )
+
         fig.update_layout(
             title=f"{metric} YoY Benchmark",
-            xaxis_title="Year",
-            yaxis_title=metric,
+            xaxis_title="Year", yaxis_title=metric,
             height=240,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        # Explicit ticks: ensure exactly the five years appear
         fig.update_xaxes(
             type='category',
             tickmode='array',
-            tickvals=[str(y) for y in YEARS],
-            ticktext=[str(y) for y in YEARS]
+            tickvals=[str(y) for y in [2021, 2022, 2023, 2024, 2025]],
+            ticktext=[str(y) for y in [2021, 2022, 2023, 2024, 2025]]
         )
         return fig
-
 
     # ---- Compute once, persist to session_state ----
     if submit:
@@ -489,6 +582,7 @@ def render_ui():
                         st.markdown(f"<span class='metric-desc'>{nar}</span>", unsafe_allow_html=True)
 
     # --- Tab 2: YoY Trend (2021–2025) ---
+
     with tab_yoy:
         if not st.session_state.metrics_ready:
             st.info("Fill in the inputs and click Submit to view YoY trends.")
@@ -499,24 +593,59 @@ def render_ui():
             metrics        = st.session_state.metrics
 
             st.markdown("#### Year-on-Year Industry Benchmark Trend (2021–2025)")
-            st.caption("p25 / p50 / p75 industry percentiles per metric over 2021–2025. The blue dot marks your company value for the selected year.")
+            st.caption(
+                "p25 / p50 / p75 industry percentiles per metric over 2021–2025. "
+                "The blue diamond marks your company value for the selected year."
+            )
+
+            # ---------- NEW: Toggle to show/hide the company YoY line ----------
+            show_company_line = st.checkbox("Show company YoY line", value=True)
 
             # Build chart_figs for this tab
             chart_figs = []
             grid_cols = st.columns(2)
+
+            # ---------- NEW: track if any metric has a multi-year company series ----------
+            any_company_series = False
+
             for idx, (metric, (desc, direction)) in enumerate(metric_info.items()):
                 df_yoy = get_yoy_benchmark(industry, metric)
                 company_val = metrics.get(metric)
-                fig = plot_yoy_trend(df_yoy, metric, company_year=financial_year, company_value=company_val)
+
+                # Compute company series only if toggle is on
+                df_company = get_company_yoy(company_df, company_name, metric) if show_company_line else None
+
+                fig = plot_yoy_trend(
+                    df_yoy, metric,
+                    company_year=financial_year,
+                    company_value=company_val,
+                    df_company=df_company  # <-- pass it in
+                )
                 chart_figs.append((metric, fig))
 
+                # Track if at least one metric has multi-year company data
+                if show_company_line and (df_company is not None and not df_company.empty):
+                    any_company_series = True
+
                 with grid_cols[idx % 2]:
-                    st.caption(f"**{metric}** — industry percentiles over time + company marker")
+                    st.caption(f"**{metric}** — industry percentiles over time + company line")
                     st.plotly_chart(fig, use_container_width=True)
+
+                    # ---------- NEW: per-chart messaging when company series isn't available ----------
+                    if show_company_line and (df_company is None or df_company.empty):
+                        st.caption(
+                            ":information_source: No multi-year data found for this company and metric; "
+                            "only the selected-year marker is shown."
+                        )
 
             # Store chart_figs in session_state for later use if needed
             st.session_state["yoy_chart_figs"] = chart_figs
 
+            # ---------- NEW: global messaging if none of the metrics have multi-year company data ----------
+            if show_company_line and not any_company_series:
+                st.info(
+                    "No multi-year company data was found across metrics; only selected-year markers will be shown."
+                )
 
 # --- Entrypoint ---
 if __name__ == "__main__":
