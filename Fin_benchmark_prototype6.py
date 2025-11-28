@@ -62,7 +62,7 @@ def _spawn_streamlit():
         render_ui()
 
 def render_ui():
-    import streamlit as st
+    import os, streamlit as st
     import pandas as pd
     import plotly.graph_objects as go
 
@@ -423,7 +423,6 @@ def render_ui():
         df = df.rename(columns={"_val": "CompanyValue"})
         return df
 
-    
     def plot_yoy_trend(df, metric, company_year=None, company_value=None, df_company=None):
         fig = go.Figure()
         if df is None or df.empty:
@@ -508,11 +507,57 @@ def render_ui():
         st.session_state.metrics = calculate_metrics()
         st.session_state.metrics_ready = True
 
+    # --- Analysis helpers (UPDATED) ---
+
+    def get_openai_api_key():
+        import os
+        import streamlit as st
+
+        # 1. Try Streamlit secrets
+        try:
+            key = st.secrets["openai"]["api_key"]
+            if key:
+                return key
+        except Exception:
+            pass
+
+        # 2. Try environment variable
+        key = os.environ.get("OPENAI_API_KEY")
+        if key:
+            return key
+
+        return None
+            
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_tokens=800):
+        if not api_key:
+            return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            text = resp.choices[0].message.content
+            return text, None
+        except Exception as e:
+            return None, f"OpenAI call failed: {e}"
+
+
     # --- Top page title (outside tabs so it never gets cut off) ---
     st.title("Company Benchmarking Dashboard")
 
     # --- Create tabs ---
-    tab_bm, tab_yoy = st.tabs(["Benchmarking (Selected Year)", "YoY Trend (2021–2025)"])
+    
+    tab_bm, tab_yoy, tab_ai = st.tabs(
+        ["Benchmarking (Selected Year)", "YoY Trend (2021–2025)", "Suggested Audit Areas"]
+    )
 
     # --- Tab 1: Benchmarking (single-year) ---
     with tab_bm:
@@ -598,14 +643,14 @@ def render_ui():
                 "The blue diamond marks your company value for the selected year."
             )
 
-            # ---------- NEW: Toggle to show/hide the company YoY line ----------
+            # ---------- Toggle to show/hide the company YoY line ----------
             show_company_line = st.checkbox("Show company YoY trend line", value=True)
 
             # Build chart_figs for this tab
             chart_figs = []
             grid_cols = st.columns(2)
 
-            # ---------- NEW: track if any metric has a multi-year company series ----------
+            # ---------- track if any metric has a multi-year company series ----------
             any_company_series = False
 
             for idx, (metric, (desc, direction)) in enumerate(metric_info.items()):
@@ -631,7 +676,7 @@ def render_ui():
                     st.caption(f"**{metric}** — industry percentiles over time + company line")
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # ---------- NEW: per-chart messaging when company series isn't available ----------
+                    # ---------- per-chart messaging when company series isn't available ----------
                     if show_company_line and (df_company is None or df_company.empty):
                         st.caption(
                             ":information_source: No multi-year data found for this company and metric; "
@@ -641,11 +686,68 @@ def render_ui():
             # Store chart_figs in session_state for later use if needed
             st.session_state["yoy_chart_figs"] = chart_figs
 
-            # ---------- NEW: global messaging if none of the metrics have multi-year company data ----------
+            # ---------- global messaging if none of the metrics have multi-year company data ----------
             if show_company_line and not any_company_series:
                 st.info(
                     "No multi-year company data was found across metrics; only selected-year markers will be shown."
                 )
+
+
+    # --- Tab 3: Suggested Audit Areas ---
+
+    with tab_ai:
+        if not st.session_state.metrics_ready:
+            st.info("Fill in the inputs and click Submit to enable AI audit suggestions.")
+        else:
+            company_name   = st.session_state.company_name
+            industry       = st.session_state.industry
+            financial_year = st.session_state.financial_year
+            metrics        = st.session_state.metrics
+
+            st.markdown("#### Suggested Audit Areas")
+            st.caption("Analyzes selected company metrics and industry benchmarks, then suggests auditable areas.")
+
+            # Model & temperature controls
+            import os
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+            with col2:
+                temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
+
+            # Build prompt preview
+            system_prompt, user_prompt = build_company_prompt(
+                company_df=company_df,
+                industry_agg=industry_agg,
+                company_name=company_name,
+                industry=industry,
+                financial_year=financial_year,
+                metrics=metrics
+            )
+            with st.expander("Prompt preview (read-only)", expanded=False):
+                st.code(system_prompt, language="text")
+                st.code(user_prompt, language="text")
+
+            # Generate suggestions
+            generate = st.button("Generate AI Audit Suggestions", type="primary")
+            if generate:
+                api_key_for_call = get_openai_api_key()
+                if not api_key_for_call:
+                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
+                else:
+                    with st.spinner("Calling OpenAI and generating suggestions..."):
+                        text, err = call_openai_for_audit(
+                            system_prompt, user_prompt,
+                            api_key=api_key_for_call,
+                            model=model, temperature=temperature
+                        )
+                    if err:
+                        st.error(err)
+                    else:
+                        st.markdown("##### Suggested Auditable Areas")
+                        st.markdown(text)
+                        st.session_state["ai_audit_suggestions"] = text
+
 
 # --- Entrypoint ---
 if __name__ == "__main__":
