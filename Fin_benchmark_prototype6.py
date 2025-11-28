@@ -435,8 +435,8 @@ def render_ui():
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p50'], name='p50', line=dict(color='orange', dash='dot')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p75'], name='p75', line=dict(color='red')))
         else:
-            fig.add_trace(go.Scatter(x=df['YearText'], y=df['p25'], name='p25', line=dict(color='orange')))
-            fig.add_trace(go.Scatter(x=df['YearText'], y=df['p50'], name='p50', line=dict(color='red', dash='dot')))
+            fig.add_trace(go.Scatter(x=df['YearText'], y=df['p25'], name='p25', line=dict(color='red')))
+            fig.add_trace(go.Scatter(x=df['YearText'], y=df['p50'], name='p50', line=dict(color='orange', dash='dot')))
             fig.add_trace(go.Scatter(x=df['YearText'], y=df['p75'], name='p75', line=dict(color='green')))
 
         # Company YoY line (if available)
