@@ -246,15 +246,15 @@ def render_ui():
         if metric == "Days Inventory on Hand":
             # Reverse logic: low = good, high = bad
             if value < p25:
-                return "Good"
+                return "Healthy"
             elif value > p75:
-                return "Bad"
+                return "Needs Improvement"
             else:
-                return "Average"
+                return "Satisfactory"
         else:
-            if value < p25: return "Bad"
-            if value < p75: return "Average"
-            return "Good"
+            if value < p25: return "Needs Improvement"
+            if value < p75: return "Satisfactory"
+            return "Healthy"
 
     def chip_color_by_direction(pct, direction, metric=None):
         mapping = {
