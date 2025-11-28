@@ -599,7 +599,7 @@ def render_ui():
             )
 
             # ---------- NEW: Toggle to show/hide the company YoY line ----------
-            show_company_line = st.checkbox("Show company YoY line", value=True)
+            show_company_line = st.checkbox("Show company YoY trend line", value=True)
 
             # Build chart_figs for this tab
             chart_figs = []
