@@ -549,6 +549,76 @@ def render_ui():
         except Exception as e:
             return None, f"OpenAI call failed: {e}"
 
+    def build_company_prompt(company_df, industry_agg, company_name, industry, financial_year, metrics):
+        """
+        Build a concise, structured prompt for the AI based on selected company,
+        selected-year metrics, and industry percentiles for that year.
+        """
+        # Get industry row for the selected year
+        ind_row = industry_agg[
+            (industry_agg['Industry'] == industry) &
+            (industry_agg['Financial Year'] == financial_year)
+        ]
+
+        # Compose metric lines aligned with your dashboard metrics
+        metric_list = [
+            "Current Ratio", "Quick Ratio", "EBITDA Margin", "Gross Margin",
+            "Days Inventory on Hand", "FCF Margin", "NWC Margin"
+        ]
+        lines = []
+        for m in metric_list:
+            val = metrics.get(m, None)
+            # Use your existing helper to find percentile columns
+            p25c, p50c, p75c = find_percentile_cols(ind_row, m) if not ind_row.empty else (None, None, None)
+            if all([p25c, p50c, p75c]) and not ind_row.empty:
+                p25 = ind_row[p25c].values[0]
+                p50 = ind_row[p50c].values[0]
+                p75 = ind_row[p75c].values[0]
+                lines.append(f"- {m}: company={val}, p25={p25}, p50={p50}, p75={p75}")
+            else:
+                lines.append(f"- {m}: company={val} (industry percentiles unavailable)")
+
+        # Optional: include compact multi-year raw snapshot for company
+        df_company = company_df[
+            company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
+        ].copy()
+        df_company = df_company[df_company['Financial Year'].isin([2021, 2022, 2023, 2024, 2025])]
+        df_company = df_company.sort_values('Financial Year')
+
+        raw_cols = [
+            'Current Assets', 'Current Liabilities', 'Inventory',
+            'Operating Cash Flow', 'Capital Expenditure',
+            'Revenue', 'EBITDA', 'Cost of Revenue'
+        ]
+        snapshots = []
+        if not df_company.empty:
+            for _, r in df_company.iterrows():
+                vals = []
+                for c in raw_cols:
+                    if c in df_company.columns:
+                        vals.append(f"{c}={r[c]}")
+                snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
+
+        system_prompt = (
+            "You are an experienced audit professional. Based on provided company financial metrics and "
+            "industry benchmarks, propose a prioritized list of auditable areas and key audit procedures. "
+            "Use clear, concise bullets. Tailor suggestions to risks implied by margins, liquidity, working "
+            "capital, inventory days, cash flows, and deviations vs industry percentiles. Avoid boilerplate; be specific."
+        )
+
+        user_prompt = (
+            f"Company: {company_name}\n"
+            f"Industry: {industry}\n"
+            f"Selected Year: {financial_year}\n"
+            f"Metrics & Benchmarks:\n" + "\n".join(lines) + "\n\n"
+            + ("Company raw multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
+            + "Task: Based on data of the company, suggest a prioritized list of auditable areas for the company. "
+            "For each area, include: risk rationale (linked to metrics/benchmarks), suggested audit procedures, and data required. "
+            "If certain data is missing, state assumptions."
+        )
+        return system_prompt, user_prompt
+
+
 
     # --- Top page title (outside tabs so it never gets cut off) ---
     st.title("Company Benchmarking Dashboard")
