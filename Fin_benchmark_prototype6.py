@@ -715,19 +715,6 @@ def render_ui():
             with col2:
                 temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
 
-            # Build prompt preview
-            system_prompt, user_prompt = build_company_prompt(
-                company_df=company_df,
-                industry_agg=industry_agg,
-                company_name=company_name,
-                industry=industry,
-                financial_year=financial_year,
-                metrics=metrics
-            )
-            with st.expander("Prompt preview (read-only)", expanded=False):
-                st.code(system_prompt, language="text")
-                st.code(user_prompt, language="text")
-
             # Generate suggestions
             generate = st.button("Generate AI Audit Suggestions", type="primary")
             if generate:
@@ -747,7 +734,6 @@ def render_ui():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text
-
 
 # --- Entrypoint ---
 if __name__ == "__main__":
