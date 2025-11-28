@@ -707,6 +707,15 @@ def render_ui():
             st.markdown("#### Suggested Audit Areas")
             st.caption("Analyzes selected company metrics and industry benchmarks, then suggests auditable areas.")
 
+            system_prompt, user_prompt = build_company_prompt(
+                company_df=company_df,
+                industry_agg=industry_agg,
+                company_name=company_name,
+                industry=industry,
+                financial_year=financial_year,
+                metrics=metrics
+            )
+
             # Model & temperature controls
             import os
             col1, col2 = st.columns([2, 1])
