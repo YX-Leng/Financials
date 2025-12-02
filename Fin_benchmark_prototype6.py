@@ -534,7 +534,7 @@ def render_ui():
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+            model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -792,7 +792,7 @@ def render_ui():
             import os
             col1, col2 = st.columns([2, 1])
             with col1:
-                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4.1"))
+                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4o"))
             with col2:
                 temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
 
