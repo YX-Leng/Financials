@@ -600,10 +600,12 @@ def render_ui():
                 snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
 
         system_prompt = (
-            "You are an experienced audit professional. Based on provided company financial metrics and "
-            "industry benchmarks, propose a prioritized list of auditable areas and key audit procedures. "
-            "Use clear, concise bullets. Tailor suggestions to risks implied by margins, liquidity, working "
-            "capital, inventory days, cash flows, and deviations vs industry percentiles. Avoid boilerplate; be specific."
+            "You are an experienced audit professional. "
+            "Based on provided company financial metrics and industry benchmarks, "
+            "propose a prioritized list of auditable areas and key audit procedures. "
+            "Include potential fraud risk indicators in these areas and suggest targeted procedures to address them. "
+            "Use clear, concise bullets and tailor suggestions to risks implied by margins, liquidity, working capital, "
+            "inventory days, cash flows, and deviations vs industry percentiles. Avoid boilerplate; be specific."
         )
 
         user_prompt = (
