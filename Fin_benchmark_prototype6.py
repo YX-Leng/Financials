@@ -601,11 +601,11 @@ def render_ui():
 
         system_prompt = (
             "You are an experienced audit professional. "
-            "Based on provided company financial metrics and industry benchmarks, "
+            "Based on provided company financial metrics, industry benchmarks, and the specific industry context, "
             "propose a prioritized list of auditable areas and key audit procedures. "
             "Include potential fraud risk indicators in these areas and suggest targeted procedures to address them. "
             "Use clear, concise bullets and tailor suggestions to risks implied by margins, liquidity, working capital, "
-            "inventory days, cash flows, and deviations vs industry percentiles. Avoid boilerplate; be specific."
+            "inventory days, cash flows, deviations vs industry percentiles, and industry-specific practices. Avoid boilerplate; be specific."
         )
 
         user_prompt = (
