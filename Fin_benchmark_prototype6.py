@@ -72,7 +72,7 @@ def render_ui():
             st.session_state[key] = None if key != "metrics_ready" else False
 
     # --- Page config & theme ---
-    st.set_page_config(page_title="Company Benchmarking Dashboard", layout="wide")
+    st.set_page_config(page_title="Industry Benchmark Analysis Dashboard", layout="wide")
     DASHBOARD_CSS = """
     <style>
     .block-container { padding-top: 2.0rem; padding-bottom: 1.6rem; }
