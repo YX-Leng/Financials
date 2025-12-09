@@ -623,7 +623,7 @@ def render_ui():
 
 
     # --- Top page title (outside tabs so it never gets cut off) ---
-    st.title("Company Benchmarking Dashboard")
+    st.title("Industry Benchmark Analysis Dashboard")
 
     # --- Create tabs ---
     
