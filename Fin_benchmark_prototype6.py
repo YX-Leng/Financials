@@ -130,7 +130,7 @@ def render_ui():
 
     # --- Free-typed company name (not restricted to list) ---
     filtered_df = company_df[company_df['Exchange'] == selected_exchange]
-    company_names = sorted(filtered_df['Company'].dropna().unique())
+    company_names = sorted(filtered_df['Company Name'].dropna().unique())
 
     company_name = st.sidebar.text_input("Company Name")
 
