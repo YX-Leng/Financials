@@ -124,8 +124,14 @@ def render_ui():
     # --- Sidebar: User Inputs ---
     st.sidebar.header("Company Input")
 
+    # --- Exchange Filter ---
+    exchange_list = sorted(company_df['Exchange'].dropna().unique())
+    selected_exchange = st.sidebar.selectbox("Exchange", exchange_list)
+
     # --- Free-typed company name (not restricted to list) ---
-    company_names = sorted(company_df['Company Name'].unique())
+    filtered_df = company_df[company_df['Exchange'] == selected_exchange]
+    company_names = sorted(filtered_df['Company'].dropna().unique())
+
     company_name = st.sidebar.text_input("Company Name")
 
     # --- Suggestion logic (case-insensitive, partial match, not clickable) ---
@@ -188,14 +194,28 @@ def render_ui():
         index=(industry_list.index(default_industry) if default_industry in industry_list else 0)
     )
 
-    current_assets = st.sidebar.text_input("Current Assets (SGD)", value=default_current_assets)
-    current_liabilities = st.sidebar.text_input("Current Liabilities (SGD)", value=default_current_liabilities)
-    inventory = st.sidebar.text_input("Inventory (SGD)", value=default_inventory)
-    operating_cf = st.sidebar.text_input("Operating Cash Flow (SGD)", value=default_operating_cf)
-    capex = st.sidebar.text_input("Capital Expenditure (SGD)", value=default_capex)
-    revenue = st.sidebar.text_input("Revenue (SGD)", value=default_revenue)
-    ebitda = st.sidebar.text_input("EBITDA (SGD)", value=default_ebitda)
-    cost_of_revenue = st.sidebar.text_input("Cost of Revenue (SGD)", value=default_cost_of_revenue)
+
+    # --- Dynamic Currency ---
+    exchange_currency_map = {
+        "SGX": "SGD",
+        "NYSE": "USD",
+        "NYSE ARCA": "USD",
+        "NYSE MKT": "USD",
+        "BATS": "USD",
+        "LSE": "GBP",
+        "HKEX": "HKD" 
+    }
+    # Get currency based on selected exchange
+    currency_label = exchange_currency_map.get(selected_exchange, "")
+
+    current_assets = st.sidebar.text_input(f"Current Assets ({currency_label})", value=default_current_assets)
+    current_liabilities = st.sidebar.text_input(f"Current Liabilities ({currency_label})", value=default_current_liabilities)
+    inventory = st.sidebar.text_input(f"Inventory ({currency_label})", value=default_inventory)
+    operating_cf = st.sidebar.text_input(f"Operating Cash Flow ({currency_label})", value=default_operating_cf)
+    capex = st.sidebar.text_input(f"Capital Expenditure ({currency_label})", value=default_capex)
+    revenue = st.sidebar.text_input(f"Revenue ({currency_label})", value=default_revenue)
+    ebitda = st.sidebar.text_input(f"EBITDA ({currency_label})", value=default_ebitda)
+    cost_of_revenue = st.sidebar.text_input(f"Cost of Revenue ({currency_label})", value=default_cost_of_revenue)
 
     def is_number(x):
         try:
@@ -815,6 +835,11 @@ def render_ui():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text
+
+
+    # --- Footer ---
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+    st.sidebar.caption("version 2.0 | 2025")
 
 # --- Entrypoint ---
 if __name__ == "__main__":
