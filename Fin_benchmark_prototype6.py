@@ -554,7 +554,7 @@ def render_ui():
 
         return None
             
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_tokens=800):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_tokens=2000):
         if not api_key:
             return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
         try:
