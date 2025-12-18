@@ -628,7 +628,7 @@ def render_ui():
         system_prompt = (
             "You are a senior internal auditor / fraud examiner with deep expertise in fraud detection, financial analysis, internal controls, and regulatory compliance." 
             "Based on the information, provide a list of business process and internal control areas that internal audit should focus." 
-            "Avoid external audit test steps, focus on exception analysis to detect fraud and internal control flaws."
+            "Avoid external audit test steps, focus on exception analysis to detect potential fraud and internal control flaws."
         )
 
         user_prompt = (
@@ -638,7 +638,7 @@ def render_ui():
             f"Metrics & Benchmarks:\n" + "\n".join(lines) + "\n\n"
             + ("Company raw multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
             + "Task: Based on data of the company, suggest a prioritized list of internal control auditable areas for the company. "
-            "For each area, include: risk rationale (linked to metrics/benchmarks), suggested audit procedures, and data required. "
+            "For each area, include: risk rationale (linked to metrics/benchmarks), suggested internal audit testing procedures, and data required. "
             "If certain data is missing, state assumptions."
         )
         return system_prompt, user_prompt
