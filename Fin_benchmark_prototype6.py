@@ -126,7 +126,9 @@ def render_ui():
 
     # --- Exchange Filter ---
     exchange_list = sorted(company_df['Exchange'].dropna().unique())
-    selected_exchange = st.sidebar.selectbox("Exchange", exchange_list)
+    
+    default_index = exchange_list.index("SGX") if "SGX" in exchange_list else 0
+    selected_exchange = st.sidebar.selectbox("Exchange", exchange_list, index=default_index)
 
     # --- Free-typed company name (not restricted to list) ---
     filtered_df = company_df[company_df['Exchange'] == selected_exchange]
@@ -620,12 +622,9 @@ def render_ui():
                 snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
 
         system_prompt = (
-            "You are an experienced audit professional. "
-            "Based on provided company financial metrics, industry benchmarks, and the specific industry context, "
-            "propose a prioritized list of auditable areas and key audit procedures. "
-            "Include potential fraud risk indicators in these areas and suggest targeted procedures to address them. "
-            "Use clear, concise bullets and tailor suggestions to risks implied by margins, liquidity, working capital, "
-            "inventory days, cash flows, deviations vs industry percentiles, and industry-specific practices. Avoid boilerplate; be specific."
+            "You are a senior internal auditor / fraud examiner with deep expertise in fraud detection, financial analysis, internal controls, and regulatory compliance." 
+            "Based on the information, provide a list of business process and internal control areas that internal audit should focus." 
+            "Avoid external audit test steps, focus on exception analysis to detect fraud and internal control flaws."
         )
 
         user_prompt = (
@@ -634,13 +633,11 @@ def render_ui():
             f"Selected Year: {financial_year}\n"
             f"Metrics & Benchmarks:\n" + "\n".join(lines) + "\n\n"
             + ("Company raw multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
-            + "Task: Based on data of the company, suggest a prioritized list of auditable areas for the company. "
+            + "Task: Based on data of the company, suggest a prioritized list of internal control auditable areas for the company. "
             "For each area, include: risk rationale (linked to metrics/benchmarks), suggested audit procedures, and data required. "
             "If certain data is missing, state assumptions."
         )
         return system_prompt, user_prompt
-
-
 
     # --- Top page title (outside tabs so it never gets cut off) ---
     st.title("Industry Benchmark Analysis Dashboard")
