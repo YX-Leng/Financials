@@ -114,8 +114,12 @@ def render_ui():
 
     @st.cache_data
     def load_company_data():
-        # Adjust sheet name as needed
         df = pd.read_excel("Company_Financials_By_FY.xlsx", sheet_name="filtered")
+        df['Financial Year'] = (
+            pd.to_numeric(df['Financial Year'], errors='coerce')    
+            .round()                                              
+            .astype('Int64')                                      
+        )
         return df
 
     company_df = load_company_data()
