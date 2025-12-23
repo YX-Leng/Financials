@@ -614,7 +614,7 @@ def render_ui():
         return None
             
 
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=600):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
         """
         Use the Responses API for better compatibility across GPT-5 family models.
         """
@@ -630,7 +630,7 @@ def render_ui():
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ],
-                max_output_tokens=max_output_tokens,
+                max_tokens=max_tokens,
             )
             # Safe extraction across SDK versions
             text = getattr(out, "output_text", None)
@@ -905,7 +905,7 @@ def render_ui():
                     if not render:
                         st.warning(
                             "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
-                            "or lowering `max_output_tokens` to stay within the model’s context window."
+                            "or lowering `max_tokens` to stay within the model’s context window."
                         )
                         with st.expander("Debug info"):
                             st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
