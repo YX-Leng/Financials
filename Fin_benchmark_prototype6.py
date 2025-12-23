@@ -774,6 +774,7 @@ def render_ui():
             "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
             "Given company data and industry benchmarks, identify the key control areas for internal audit focus. "
             "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
+            "Do not use acronyms or abbreviations in your response. Always write out the full term."
         )
 
         if not lines:
@@ -1009,12 +1010,6 @@ def render_ui():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(render)
                         st.session_state["ai_audit_suggestions"] = text
-
-            if st.button("LLM connectivity test (gpt-5)"):
-                t, e = call_openai_for_audit("You are helpful.", "Say hello in one sentence.",
-                                            api_key=get_openai_api_key(), model=model, max_tokens=600)
-                st.write("Text:", t)
-                st.write("Error:", e)
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
