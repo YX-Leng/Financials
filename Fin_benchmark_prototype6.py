@@ -1,4 +1,3 @@
-
 import os
 import sys
 import subprocess
@@ -6,6 +5,7 @@ import webbrowser
 import time
 import socket
 from io import BytesIO
+import numpy as np
 
 def _running_inside_streamlit() -> bool:
     try:
@@ -230,6 +230,43 @@ def render_ui():
         except:
             return False
 
+    def to_float_or_none(x):
+        try:
+            if x is None:
+                return None
+            s = str(x).strip()
+            if s == "" or s.lower() == "nan":
+                return None
+            v = float(s)
+            return None if (isinstance(v, float) and np.isnan(v)) else v
+        except Exception:
+            return None
+
+    def get_df_value(company_df, company_name, financial_year, col):
+        if col not in company_df.columns:
+            return None
+        mask_name = company_df['Company Name'].str.strip().str.lower() == str(company_name).strip().lower()
+        mask_year = company_df['Financial Year'] == financial_year
+        df_row = company_df.loc[mask_name & mask_year, [col]]
+        if df_row.empty:
+            return None
+        v = df_row[col].iloc[0]
+        try:
+            v = float(v)
+            return None if (isinstance(v, float) and np.isnan(v)) else v
+        except Exception:
+            return None
+
+    def safe_div_num(a, b):
+        if a is None or b is None or b == 0:
+            return None
+        try:
+            v = a / b
+            # Treat NaN as missing
+            return None if (isinstance(v, float) and np.isnan(v)) else v
+        except Exception:
+            return None
+
     all_filled = all([
         company_name.strip(),
         str(financial_year), industry,
@@ -249,7 +286,8 @@ def render_ui():
 
     # --- Helpers ---
     def fmt(metric, v):
-        if v is None: return "—"
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return "—"
         if metric in ("EBITDA Margin", "Gross Margin", "FCF Margin", "NWC Margin"):
             return f"{v*100:.1f}%"
         if metric in ("Current Ratio", "Quick Ratio"):
@@ -257,6 +295,7 @@ def render_ui():
         if metric == "Days Inventory on Hand":
             return f"{v:.0f} days"
         return f"{v:.2f}"
+
 
     metric_info = {
         "Current Ratio": ("Short-term liquidity — above 1 is generally healthy.", "High is better"),
@@ -410,9 +449,6 @@ def render_ui():
         if df.empty:
             return None
 
-        # Compute metric per row
-        import numpy as np
-
         def safe_div(a, b):
             try:
                 return np.where(b != 0, a / b, np.nan)
@@ -505,32 +541,60 @@ def render_ui():
 
     # ---- Compute once, persist to session_state ----
     if submit:
-        current_assets = float(current_assets)
-        current_liabilities = float(current_liabilities)
-        inventory = float(inventory)
-        operating_cf = float(operating_cf)
-        capex = float(capex)
-        revenue = float(revenue)
-        ebitda = float(ebitda)
-        cost_of_revenue = float(cost_of_revenue)
+        # Normalize inputs to float or None
+        ca_input   = to_float_or_none(current_assets)
+        cl_input   = to_float_or_none(current_liabilities)
+        inv_input  = to_float_or_none(inventory)
+        ocf_input  = to_float_or_none(operating_cf)
+        capex_input= to_float_or_none(capex)
+        rev_input  = to_float_or_none(revenue)
+        ebitda_in  = to_float_or_none(ebitda)
+        cor_input  = to_float_or_none(cost_of_revenue)
+
+        current_assets      = ca_input   if ca_input   is not None else get_df_value(company_df, company_name, financial_year, "Current Assets")
+        current_liabilities = cl_input   if cl_input   is not None else get_df_value(company_df, company_name, financial_year, "Current Liabilities")
+        inventory           = inv_input  if inv_input  is not None else get_df_value(company_df, company_name, financial_year, "Inventory")
+        operating_cf        = ocf_input  if ocf_input  is not None else get_df_value(company_df, company_name, financial_year, "Operating Cash Flow")
+        capex               = capex_input if capex_input is not None else get_df_value(company_df, company_name, financial_year, "Capital Expenditure")
+        revenue             = rev_input  if rev_input  is not None else get_df_value(company_df, company_name, financial_year, "Revenue")
+        ebitda              = ebitda_in  if ebitda_in  is not None else get_df_value(company_df, company_name, financial_year, "EBITDA")
+        cost_of_revenue     = cor_input  if cor_input  is not None else get_df_value(company_df, company_name, financial_year, "Cost of Revenue")
 
         def calculate_metrics():
             m = {}
-            m['Current Ratio'] = current_liabilities and (current_assets / current_liabilities)
-            m['Quick Ratio'] = current_liabilities and ((current_assets - inventory) / current_liabilities)
-            m['EBITDA Margin'] = revenue and (ebitda / revenue)
-            m['Gross Margin'] = revenue and ((revenue - cost_of_revenue) / revenue)
-            m['Days Inventory on Hand'] = cost_of_revenue and ((inventory / cost_of_revenue) * 365)
-            fcf = operating_cf - capex
-            m['FCF Margin'] = revenue and (fcf / revenue)
-            nwc = current_assets - current_liabilities
-            m['NWC Margin'] = revenue and (nwc / revenue)
+
+            # Current Ratio = CA / CL
+            m['Current Ratio'] = safe_div_num(current_assets, current_liabilities)
+
+            # Quick Ratio = (CA - Inventory) / CL
+            ca_minus_inv = None if (current_assets is None or inventory is None) else (current_assets - inventory)
+            m['Quick Ratio'] = safe_div_num(ca_minus_inv, current_liabilities)
+
+            # EBITDA Margin = EBITDA / Revenue
+            m['EBITDA Margin'] = safe_div_num(ebitda, revenue)
+
+            # Gross Margin = (Revenue - CoR) / Revenue
+            rev_minus_cor = None if (revenue is None or cost_of_revenue is None) else (revenue - cost_of_revenue)
+            m['Gross Margin'] = safe_div_num(rev_minus_cor, revenue)
+
+            # Days Inventory on Hand = (Inventory / CoR) * 365
+            inv_div_cor = safe_div_num(inventory, cost_of_revenue)
+            m['Days Inventory on Hand'] = None if inv_div_cor is None else inv_div_cor * 365
+
+            # FCF Margin = (Operating CF - Capex) / Revenue
+            fcf = None if (operating_cf is None or capex is None) else (operating_cf - capex)
+            m['FCF Margin'] = safe_div_num(fcf, revenue)
+
+            # NWC Margin = (CA - CL) / Revenue
+            nwc = None if (current_assets is None or current_liabilities is None) else (current_assets - current_liabilities)
+            m['NWC Margin'] = safe_div_num(nwc, revenue)
+
             return m
 
-        st.session_state.company_name = company_name
-        st.session_state.industry = industry
-        st.session_state.financial_year = financial_year
-        st.session_state.metrics = calculate_metrics()
+        st.session_state.company_name  = company_name
+        st.session_state.industry      = industry
+        st.session_state.financial_year= financial_year
+        st.session_state.metrics       = calculate_metrics()
         st.session_state.metrics_ready = True
 
     # --- Analysis helpers (UPDATED) ---
@@ -705,9 +769,16 @@ def render_ui():
             grid_cols = st.columns(2)
             for i, d in enumerate(cards):
                 with grid_cols[i % 2]:
-                    st.caption(f"**{d['metric']}** — p25 / p50 / p75 (marker = company)")
-                    fig = chart_figs[i][1]
-                    st.plotly_chart(fig, use_container_width=True)
+                    metric_name = d['metric']
+                    st.caption(f"**{metric_name}** — p25 / p50 / p75 (marker = company)")
+
+                    fig = plot_benchmark(metric_name, d['value'], d['p25'], d['p50'], d['p75'])
+
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key=f"bm_chart_{metric_name}_{st.session_state.get('financial_year')}"
+                    )
 
                     row = analysis[(analysis['Industry'] == industry) & (analysis['Metric Name'] == d['metric'])]
                     if not row.empty and d["pct"]:
@@ -749,15 +820,13 @@ def render_ui():
             for idx, (metric, (desc, direction)) in enumerate(metric_info.items()):
                 df_yoy = get_yoy_benchmark(industry, metric)
                 company_val = metrics.get(metric)
-
-                # Compute company series only if toggle is on
                 df_company = get_company_yoy(company_df, company_name, metric) if show_company_line else None
 
                 fig = plot_yoy_trend(
                     df_yoy, metric,
                     company_year=financial_year,
                     company_value=company_val,
-                    df_company=df_company  # <-- pass it in
+                    df_company=df_company 
                 )
                 chart_figs.append((metric, fig))
 
@@ -767,7 +836,11 @@ def render_ui():
 
                 with grid_cols[idx % 2]:
                     st.caption(f"**{metric}** — industry percentiles over time + company line")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        key=f"yoy_chart_{metric}_{st.session_state.get('company_name')}"
+                    )
 
                     # ---------- per-chart messaging when company series isn't available ----------
                     if show_company_line and (df_company is None or df_company.empty):
@@ -784,7 +857,6 @@ def render_ui():
                 st.info(
                     "No multi-year company data was found across metrics; only selected-year markers will be shown."
                 )
-
 
     # --- Tab 3: Suggested Audit Areas ---
 
@@ -840,7 +912,7 @@ def render_ui():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 2.1 | 2025")
+    st.sidebar.caption("version 2.2 | 2025")
 
 # --- Entrypoint ---
 if __name__ == "__main__":
