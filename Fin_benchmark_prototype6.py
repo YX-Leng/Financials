@@ -630,7 +630,7 @@ def render_ui():
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
-                ]
+                ],
                 temperature=temperature,
                 max_completion_tokens=max_completion_tokens,
             )
