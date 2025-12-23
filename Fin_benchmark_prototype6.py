@@ -614,7 +614,7 @@ def render_ui():
         return None
             
 
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=600):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=800):
         """
         Use the Responses API for better compatibility across GPT-5 family models.
         """
@@ -699,7 +699,6 @@ def render_ui():
             f"Industry: {industry}\n"
             f"Year: {financial_year}\n"
             f"Metrics and Benchmarks:\n" + "\n".join(lines) + "\n\n"
-            + ("Multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
             + "Please suggest a prioritized list of internal control areas for audit. For each area, include:\n"
             "1. Risk rationale (based on metrics or trends).\n"
             "2. Suggested audit procedures (focus on exceptions and fraud risks).\n"
