@@ -303,7 +303,7 @@ def render_ui():
         return None, None, None
 
     def get_benchmark(metric, value):
-        row = industry_agg[(industry_agg['Industry'] == industry) & (industry_agg['Financial Year'] == financial_year)]
+        row = industry_agg[(industry_agg['Industry'] == industry) & (industry_agg['Financial Year'] == financial_year) & (industry_agg['Exchange'] == selected_exchange)]
         if row.empty or value is None:
             return None, None, None, None
         p25c, p50c, p75c = find_percentile_cols(row, metric)
@@ -840,7 +840,7 @@ def render_ui():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 2.0 | 2025")
+    st.sidebar.caption("version 2.1 | 2025")
 
 # --- Entrypoint ---
 if __name__ == "__main__":
