@@ -615,9 +615,7 @@ def render_ui():
             
 
     def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
-        """
-        Use the Responses API for better compatibility across GPT-5 family models.
-        """
+
         if not api_key:
             return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
         try:
@@ -643,50 +641,49 @@ def render_ui():
 
     def build_company_prompt(company_df, industry_agg, company_name, industry, financial_year, metrics):
 
-        # Get industry row for the selected year
-        ind_row = industry_agg[
-            (industry_agg['Industry'] == industry) &
-            (industry_agg['Financial Year'] == financial_year)
+        def severity_gap(metric_name, value, p25, p75):
+            if value is None or (p25 is None and p75 is None):
+                return 0.0
+            # For DIOH (lower is better): above p75 is worse
+            if metric_name == "Days Inventory on Hand":
+                return max(0.0, (value - (p75 if p75 is not None else value)))
+            # For other metrics (higher is better): below p25 is worse
+            return max(0.0, ((p25 if p25 is not None else value) - value))
+
+        metric_list = [
+            "Current Ratio",
+            "Quick Ratio",
+            "EBITDA Margin",
+            "Gross Margin",
+            "Days Inventory on Hand",
+            "FCF Margin",
+            "NWC Margin",
         ]
 
-        # Compose metric lines aligned with your dashboard metrics
-        metric_list = [
-            "Current Ratio", "Quick Ratio", "EBITDA Margin", "Gross Margin",
-            "Days Inventory on Hand", "FCF Margin", "NWC Margin"
-        ]
-        lines = []
+        # Collect metrics that are "Needs Improvement" with a severity score
+        ni_items = []
         for m in metric_list:
             val = metrics.get(m, None)
-            # Use your existing helper to find percentile columns
-            p25c, p50c, p75c = find_percentile_cols(ind_row, m) if not ind_row.empty else (None, None, None)
-            if all([p25c, p50c, p75c]) and not ind_row.empty:
-                p25 = ind_row[p25c].values[0]
-                p50 = ind_row[p50c].values[0]
-                p75 = ind_row[p75c].values[0]
-                lines.append(f"- {m}: company={val}, p25={p25}, p50={p50}, p75={p75}")
-            else:
-                lines.append(f"- {m}: company={val} (industry percentiles unavailable)")
+            p25, p50, p75, pct = get_benchmark(m, val)
+            if pct == "Needs Improvement":
+                gap = severity_gap(m, val, p25, p75)
+                ni_items.append({
+                    "metric": m, "value": val,
+                    "p25": p25, "p50": p50, "p75": p75,
+                    "pct": pct, "gap": 0.0 if gap is None else float(gap)
+                })
 
-        # Optional: include compact multi-year raw snapshot for company
-        df_company = company_df[
-            company_df['Company Name'].str.strip().str.lower() == company_name.strip().lower()
-        ].copy()
-        df_company = df_company[df_company['Financial Year'].isin([2021, 2022, 2023, 2024, 2025])]
-        df_company = df_company.sort_values('Financial Year')
+        # Take top 3 by severity (largest gap first)
+        ni_items_sorted = sorted(ni_items, key=lambda x: x["gap"], reverse=True)[:3]
 
-        raw_cols = [
-            'Current Assets', 'Current Liabilities', 'Inventory',
-            'Operating Cash Flow', 'Capital Expenditure',
-            'Revenue', 'EBITDA', 'Cost of Revenue'
-        ]
-        snapshots = []
-        if not df_company.empty:
-            for _, r in df_company.iterrows():
-                vals = []
-                for c in raw_cols:
-                    if c in df_company.columns:
-                        vals.append(f"{c}={r[c]}")
-                snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
+        # Build lines ONLY from the top 3 NI metrics
+        lines = []
+        for item in ni_items_sorted:
+            lines.append(
+                f"- {item['metric']}: company={item['value']}, "
+                f"p25={item['p25']}, p50={item['p50']}, p75={item['p75']} "
+                f"(status={item['pct']}, severity_gap={item['gap']:.2f})"
+            )
 
         system_prompt = (
             "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
@@ -694,18 +691,32 @@ def render_ui():
             "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
         )
 
+        if not lines:
+            user_prompt = (
+                f"Company: {company_name}\n"
+                f"Industry: {industry}\n"
+                f"Year: {financial_year}\n"
+                "No metrics were flagged as 'Needs Improvement'. "
+                "Suggest internal control areas for audit based on potential anomalies you infer from common risk patterns in this industry. "
+                "For each area, include:\n"
+                "1. Risk rationale.\n"
+                "2. Suggested audit procedures (exceptions/fraud focus).\n"
+                "3. Data required (source systems and fields).\n"
+                "State assumptions if data is missing."
+            )
+            return system_prompt, user_prompt
+
         user_prompt = (
             f"Company: {company_name}\n"
             f"Industry: {industry}\n"
             f"Year: {financial_year}\n"
-            f"Metrics and Benchmarks:\n" + "\n".join(lines) + "\n\n"
-            + "Please suggest a prioritized list of internal control areas for audit. For each area, include:\n"
-            "1. Risk rationale (based on metrics or trends).\n"
+            "Top 3 metrics needing improvement:\n" + "\n".join(lines) + "\n\n"
+            "Based only on these metrics, suggest a prioritized list of internal control areas for audit. For each area, include:\n"
+            "1. Risk rationale (tie back to the specific metric).\n"
             "2. Suggested audit procedures (focus on exceptions and fraud risks).\n"
             "3. Data required (source systems and fields).\n"
             "State any assumptions if data is missing."
         )
-
         return system_prompt, user_prompt
 
     # --- Top page title (outside tabs so it never gets cut off) ---
