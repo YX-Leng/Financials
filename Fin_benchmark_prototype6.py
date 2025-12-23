@@ -614,7 +614,7 @@ def render_ui():
         return None
             
 
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=800):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=600):
         """
         Use the Responses API for better compatibility across GPT-5 family models.
         """
