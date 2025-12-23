@@ -613,29 +613,112 @@ def render_ui():
 
         return None
             
+    def _extract_text_any(out_obj):
+        try:
+            # Newer Responses API convenience field
+            txt = getattr(out_obj, "output_text", None)
+            if txt and str(txt).strip():
+                return str(txt).strip()
+        except Exception:
+            pass
+
+        # Try common shapes
+        try:
+            # Chat Completions shape
+            if hasattr(out_obj, "choices") and out_obj.choices:
+                # 1) Standard chat
+                msg = getattr(out_obj.choices[0], "message", None)
+                if msg and getattr(msg, "content", None):
+                    return str(msg.content).strip()
+                # 2) Responses-like content parts under choices
+                content = getattr(out_obj.choices[0], "content", None)
+                if isinstance(content, list) and content:
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                            if part.get("text"):
+                                return str(part["text"]).strip()
+        except Exception:
+            pass
+
+        # Responses API "output" list shape (content parts)
+        try:
+            output = getattr(out_obj, "output", None)
+            if isinstance(output, list):
+                for item in output:
+                    content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+                    if isinstance(content, list):
+                        for part in content:
+                            # part may be dict or object with attributes
+                            if isinstance(part, dict):
+                                if part.get("type") in ("output_text", "text") and part.get("text"):
+                                    return str(part["text"]).strip()
+                            else:
+                                if getattr(part, "type", None) in ("output_text", "text") and getattr(part, "text", None):
+                                    return str(getattr(part, "text")).strip()
+        except Exception:
+            pass
+
+        # Final fallback: stringify object (for debugging)
+        try:
+            return str(out_obj).strip()
+        except Exception:
+            return ""
+        
 
     def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
-
         if not api_key:
-            return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
+            return None, "OpenAI API key is not set."
+
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            mdl = model or os.environ.get("OPENAI_MODEL", "gpt-5")  # prefer full gpt-5
-            out = client.responses.create(
+            mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
+
+            # --- Try Responses API first ---
+            try:
+                out = client.responses.create(
+                    model=mdl,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    # Correct for Responses API:
+                    max_output_tokens=max_tokens,
+                )
+                txt = _extract_text_any(out)
+                if txt:
+                    return txt, None
+            except TypeError:
+                # Retry without max_output_tokens if SDK build rejects it
+                try:
+                    out = client.responses.create(
+                        model=mdl,
+                        input=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_prompt},
+                        ],
+                    )
+                    txt = _extract_text_any(out)
+                    if txt:
+                        return txt, None
+                except Exception:
+                    pass
+            except Exception:
+                pass  # fall through to Chat Completions
+
+            # --- Fallback: Chat Completions ---
+            resp = client.chat.completions.create(
                 model=mdl,
-                input=[
+                messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ],
-                max_output_tokens=max_tokens,
+                # Correct for Chat Completions:
+                max_tokens=max_tokens,
             )
-            # Safe extraction across SDK versions
-            text = getattr(out, "output_text", None)
-            if not text and hasattr(out, "choices"):
-                # fallback if using a compat layer
-                text = out.choices[0].message.content if out.choices else None
-            return text, None
+            txt2 = _extract_text_any(resp)
+            return (txt2 if txt2 else None), None
+
         except Exception as e:
             return None, f"OpenAI call failed: {e}"
 
