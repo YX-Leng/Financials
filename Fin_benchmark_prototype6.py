@@ -6,6 +6,9 @@ import time
 import socket
 from io import BytesIO
 import numpy as np
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
 
 def _running_inside_streamlit() -> bool:
     try:
@@ -62,10 +65,6 @@ def _spawn_streamlit():
         render_ui()
 
 def render_ui():
-    import os, streamlit as st
-    import pandas as pd
-    import plotly.graph_objects as go
-
     # --- Session defaults ---
     for key in ("company_name", "industry", "financial_year", "metrics_ready", "metrics"):
         if key not in st.session_state:
@@ -353,7 +352,6 @@ def render_ui():
         return p25, p50, p75, pct
 
     def plot_benchmark(metric, value, p25, p50, p75):
-        import plotly.graph_objects as go
         if any(x is None for x in [p25, p50, p75, value]):
             return go.Figure()
         x_min = min(0, p25, value, p50, p75)
@@ -600,9 +598,6 @@ def render_ui():
     # --- Analysis helpers (UPDATED) ---
 
     def get_openai_api_key():
-        import os
-        import streamlit as st
-
         # 1. Try Streamlit secrets
         try:
             key = st.secrets["openai"]["api_key"]
@@ -618,7 +613,7 @@ def render_ui():
 
         return None
             
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_completion_tokens=2000):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_completion_tokens=2000):
         if not api_key:
             return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
         try:
@@ -631,7 +626,6 @@ def render_ui():
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=temperature,
                 max_completion_tokens=max_completion_tokens,
             )
             text = resp.choices[0].message.content
@@ -881,13 +875,10 @@ def render_ui():
                 metrics=metrics
             )
 
-            # Model & temperature controls
-            import os
-            col1, col2 = st.columns([2, 1])
+            # Model controls
+            col1 = st.columns(1)[0] 
             with col1:
                 model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-5-nano"))
-            with col2:
-                temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
 
             # Generate suggestions
             generate = st.button("Generate Audit Suggestions", type="primary")
@@ -900,7 +891,7 @@ def render_ui():
                         text, err = call_openai_for_audit(
                             system_prompt, user_prompt,
                             api_key=api_key_for_call,
-                            model=model, temperature=temperature
+                            model=model
                         )
                     if err:
                         st.error(err)
