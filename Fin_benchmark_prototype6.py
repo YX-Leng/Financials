@@ -630,7 +630,7 @@ def render_ui():
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ],
-                max_tokens=max_tokens,
+                max_output_tokens=max_tokens,
             )
             # Safe extraction across SDK versions
             text = getattr(out, "output_text", None)
