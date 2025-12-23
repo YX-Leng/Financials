@@ -893,13 +893,6 @@ def render_ui():
                 metrics=metrics
             )
 
-
-        if st.button("LLM connectivity test (gpt-5)"):
-            t, e = call_openai_for_audit("You are helpful.", "Say hello in one sentence.",
-                                        api_key=get_openai_api_key(), model=model, max_tokens=60)
-            st.write("Text:", t)
-            st.write("Error:", e)
-
             # Model controls
             col1 = st.columns(1)[0] 
             with col1:
@@ -931,6 +924,12 @@ def render_ui():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(render)
                         st.session_state["ai_audit_suggestions"] = text
+
+            if st.button("LLM connectivity test (gpt-5)"):
+                t, e = call_openai_for_audit("You are helpful.", "Say hello in one sentence.",
+                                            api_key=get_openai_api_key(), model=model, max_tokens=60)
+                st.write("Text:", t)
+                st.write("Error:", e)
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
