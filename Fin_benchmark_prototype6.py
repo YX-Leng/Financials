@@ -614,7 +614,7 @@ def render_ui():
         return None
             
 
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=1000):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=800):
         """
         Use the Responses API for better compatibility across GPT-5 family models.
         """
@@ -897,15 +897,14 @@ def render_ui():
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = call_openai_for_audit(
-                            system_prompt, user_prompt,
-                            api_key=api_key_for_call,
-                            model=model
+                            system_prompt, user_prompt, api_key=api_key_for_call, model=model
                         )
-                    if err:
-                        st.error(err)
+                    render = (text or "").strip()
+                    if not render:
+                        st.warning("No suggestions generated. Try switching to `gpt-5` or simplifying inputs.")
                     else:
                         st.markdown("##### Suggested Auditable Areas")
-                        st.markdown(text)
+                        st.markdown(render)
                         st.session_state["ai_audit_suggestions"] = text
 
 
