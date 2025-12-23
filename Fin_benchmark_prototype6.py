@@ -689,24 +689,24 @@ def render_ui():
                 snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
 
         system_prompt = (
-            "You are a senior internal auditor / fraud examiner with deep expertise in fraud detection, financial analysis, internal controls, and regulatory compliance across multiple industries." 
-            "Based on the information, identify high-risk business processes and internal control areas that internal audit should prioritize for fraud detection and control effectiveness." 
-            "Focus on exception analysis, anomaly detection, and data-driven audit procedures. Avoid external audit steps or generic compliance checks"
+            "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls across various industries. "
+            "Given company data and industry benchmarks, identify the most important business processes and control areas for internal audit focus. "
+            "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
         )
 
         user_prompt = (
             f"Company: {company_name}\n"
             f"Industry: {industry}\n"
-            f"Selected Year: {financial_year}\n"
-            f"Metrics & Benchmarks:\n" + "\n".join(lines) + "\n\n"
-            + ("Company raw multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
-            + "Task: Based on the company's data and industry context, suggest a prioritized list of internal control auditable areas."
-            "For each area, include:\n"
-            "1. Risk Rationale (linked to metrics, benchmarks, or trends).\n"
-            "2. Suggested Internal Audit Testing Procedures (focus on exception analysis and fraud indicators).\n"
-            "3. Data Required (specify source systems, fields, and attributes).\n"
-            "If certain data is missing, state assumptions clearly."
+            f"Year: {financial_year}\n"
+            f"Metrics and Benchmarks:\n" + "\n".join(lines) + "\n\n"
+            + ("Multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
+            + "Please suggest a prioritized list of internal control areas for audit. For each area, include:\n"
+            "1. Risk rationale (based on metrics or trends).\n"
+            "2. Suggested audit procedures (focus on exceptions and fraud risks).\n"
+            "3. Data required (source systems and fields).\n"
+            "State any assumptions if data is missing."
         )
+
         return system_prompt, user_prompt
 
     # --- Top page title (outside tabs so it never gets cut off) ---
@@ -910,7 +910,7 @@ def render_ui():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 2.2 | 2025")
+    st.sidebar.caption("version 2.3 | 2025")
 
 # --- Entrypoint ---
 if __name__ == "__main__":
