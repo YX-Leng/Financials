@@ -683,6 +683,8 @@ def render_ui():
                         {"role": "user",   "content": user_prompt},
                     ],
                     # Correct for Responses API:
+                    response_format={"type": "text"},         # force text section
+                    reasoning={"effort": "low"},              # reduce thought token usage
                     max_output_tokens=max_tokens,
                 )
                 txt = _extract_text_any(out)
@@ -1010,7 +1012,7 @@ def render_ui():
 
             if st.button("LLM connectivity test (gpt-5)"):
                 t, e = call_openai_for_audit("You are helpful.", "Say hello in one sentence.",
-                                            api_key=get_openai_api_key(), model=model, max_tokens=60)
+                                            api_key=get_openai_api_key(), model=model, max_tokens=600)
                 st.write("Text:", t)
                 st.write("Error:", e)
 
