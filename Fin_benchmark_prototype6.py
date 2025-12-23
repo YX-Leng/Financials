@@ -403,7 +403,7 @@ def render_ui():
                 break
         if not all([p25_col, p50_col, p75_col]):
             return None
-        df = industry_agg[industry_agg['Industry'] == industry_name]
+        df = industry_agg[(industry_agg['Industry'] == industry_name) & (industry_agg['Exchange'] == selected_exchange)]
         df = df[df['Financial Year'].isin(YEARS)].copy()
         df['YearText'] = df['Financial Year'].astype(str)
         df = df[['Financial Year', 'YearText', p25_col, p50_col, p75_col]].rename(
