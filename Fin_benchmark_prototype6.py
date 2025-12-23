@@ -640,10 +640,7 @@ def render_ui():
             return None, f"OpenAI call failed: {e}"
 
     def build_company_prompt(company_df, industry_agg, company_name, industry, financial_year, metrics):
-        """
-        Build a concise, structured prompt for the AI based on selected company,
-        selected-year metrics, and industry percentiles for that year.
-        """
+
         # Get industry row for the selected year
         ind_row = industry_agg[
             (industry_agg['Industry'] == industry) &
@@ -690,9 +687,9 @@ def render_ui():
                 snapshots.append(f"{int(r['Financial Year'])}: " + ", ".join(vals))
 
         system_prompt = (
-            "You are a senior internal auditor / fraud examiner with deep expertise in fraud detection, financial analysis, internal controls, and regulatory compliance." 
-            "Based on the information, provide a list of business process and internal control areas that internal audit should focus." 
-            "Avoid external audit test steps, focus on exception analysis to detect potential fraud and internal control flaws."
+            "You are a senior internal auditor / fraud examiner with deep expertise in fraud detection, financial analysis, internal controls, and regulatory compliance across multiple industries." 
+            "Based on the information, identify high-risk business processes and internal control areas that internal audit should prioritize for fraud detection and control effectiveness." 
+            "Focus on exception analysis, anomaly detection, and data-driven audit procedures. Avoid external audit steps or generic compliance checks"
         )
 
         user_prompt = (
@@ -701,9 +698,12 @@ def render_ui():
             f"Selected Year: {financial_year}\n"
             f"Metrics & Benchmarks:\n" + "\n".join(lines) + "\n\n"
             + ("Company raw multi-year snapshot:\n" + "\n".join(snapshots) + "\n\n" if snapshots else "")
-            + "Task: Based on data of the company, suggest a prioritized list of internal control auditable areas for the company. "
-            "For each area, include: risk rationale (linked to metrics/benchmarks), suggested internal audit testing procedures, and data required. "
-            "If certain data is missing, state assumptions."
+            + "Task: Based on the company's data and industry context, suggest a prioritized list of internal control auditable areas."
+            "For each area, include:\n"
+            "1. Risk Rationale (linked to metrics, benchmarks, or trends).\n"
+            "2. Suggested Internal Audit Testing Procedures (focus on exception analysis and fraud indicators).\n"
+            "3. Data Required (specify source systems, fields, and attributes).\n"
+            "If certain data is missing, state assumptions clearly."
         )
         return system_prompt, user_prompt
 
