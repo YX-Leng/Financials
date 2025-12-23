@@ -613,22 +613,30 @@ def render_ui():
 
         return None
             
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_completion_tokens=2000):
+
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, max_output_tokens=1000):
+        """
+        Use the Responses API for better compatibility across GPT-5 family models.
+        """
         if not api_key:
             return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            model = model or os.environ.get("OPENAI_MODEL", "gpt-5-nano")
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
+            mdl = model or os.environ.get("OPENAI_MODEL", "gpt-5")  # prefer full gpt-5
+            out = client.responses.create(
+                model=mdl,
+                input=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user",   "content": user_prompt},
                 ],
-                max_completion_tokens=max_completion_tokens,
+                max_output_tokens=max_output_tokens,
             )
-            text = resp.choices[0].message.content
+            # Safe extraction across SDK versions
+            text = getattr(out, "output_text", None)
+            if not text and hasattr(out, "choices"):
+                # fallback if using a compat layer
+                text = out.choices[0].message.content if out.choices else None
             return text, None
         except Exception as e:
             return None, f"OpenAI call failed: {e}"
@@ -878,7 +886,7 @@ def render_ui():
             # Model controls
             col1 = st.columns(1)[0] 
             with col1:
-                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-5-nano"))
+                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-5"))
 
             # Generate suggestions
             generate = st.button("Generate Audit Suggestions", type="primary")
