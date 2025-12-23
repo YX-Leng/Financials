@@ -618,13 +618,13 @@ def render_ui():
 
         return None
             
-    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_tokens=2000):
+    def call_openai_for_audit(system_prompt, user_prompt, api_key, model=None, temperature=0.2, max_completion_tokens=2000):
         if not api_key:
             return None, "OpenAI API key is not set. Please set it in your environment or Streamlit secrets."
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            model = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
+            model = model or os.environ.get("OPENAI_MODEL", "gpt-5 nano")
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
@@ -632,7 +632,7 @@ def render_ui():
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
             )
             text = resp.choices[0].message.content
             return text, None
@@ -885,7 +885,7 @@ def render_ui():
             import os
             col1, col2 = st.columns([2, 1])
             with col1:
-                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-4o"))
+                model = st.text_input("Model (optional)", value=os.environ.get("OPENAI_MODEL", "gpt-5 nano"))
             with col2:
                 temperature = st.slider("Creativity (temperature)", min_value=0.0, max_value=1.0, value=0.2, step=0.1)
 
