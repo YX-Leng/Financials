@@ -604,8 +604,8 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
 
 def _build_audit_prompt_allmetrics(company, exchange, industry, fy, summary_rows):
     system = (
-        "You are an experienced internal auditor. Using all the metrics and benchmark context, "
-        "propose the TOP 5 auditable areas with highest risk and business impact. "
+        "You are an experienced internal auditor. Focusing on the metrics and benchmarks that needs improvement, "
+        "propose the TOP 3 auditable areas with highest risk and business impact. "
         "Avoid external audit or generic compliance steps."
         "Do not use acronyms or abbreviations in your response. Always write out the full term."
         "Be specific about risks, testing steps, and data sources."
