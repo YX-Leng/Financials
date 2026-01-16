@@ -537,7 +537,6 @@ def _call_openai(system_prompt: str,
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ],
-                temperature=0.2,
                 max_tokens=token_budget,   # chat API expects 'max_tokens'
             )
             text = (resp.choices[0].message.content or "").strip()
@@ -554,8 +553,7 @@ def _call_openai(system_prompt: str,
             resp = client.responses.create(
                 model=mdl,
                 input=f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}",
-                temperature=0.2,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=max_tokens,
             )
 
             # Prefer the convenience accessor if present
