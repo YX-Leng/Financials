@@ -618,12 +618,12 @@ def _synthesize_finhealth_signals(metrics_rows, top_k=8):
 def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
         "You are a senior financial analyst and internal auditor. "
-        "Use the provided synthesized signals (already computed by the back end) to assess the company. "
-        "Write in plain business English, concise and action-focused. Conclude with 3–5 priority actions."
+        "Use the provided synthesized signals to assess the company. "
+        "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
     )
 
     # Prefer a small K; you can make this a UI control
-    signals = _synthesize_finhealth_signals(metrics_rows, top_k=6)
+    signals = _synthesize_finhealth_signals(metrics_rows, top_k=3)
 
     header = (
         f"Company: {company}\n"
