@@ -514,7 +514,7 @@ def _call_openai(system_prompt: str, user_prompt: str, model: str = None, max_ou
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=max_output_tokens,
+            max_tokens=max_tokens,
         )
         return out.choices[0].message.content
     except Exception:
