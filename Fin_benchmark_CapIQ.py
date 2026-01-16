@@ -1067,7 +1067,7 @@ def main():
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = _call_openai(
-                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=900
+                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
                         )
 
                     if err:
