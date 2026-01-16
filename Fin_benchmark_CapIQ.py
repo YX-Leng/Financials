@@ -518,7 +518,7 @@ def _call_openai(system_prompt: str, user_prompt: str, model: str = None, max_ou
         )
         return out.choices[0].message.content
     except Exception:
-        return ""
+        return "", f"OpenAI call failed: {e}"
 
 
 def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
@@ -844,17 +844,41 @@ def main():
                     st.write(", ".join(skipped_bm))
 
 
-        with st.expander("Auto analysis (GPT‑5)", expanded=True):
-            model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"))
-            if st.checkbox("Generate analysis automatically", value=True):
-                sys_p, usr_p = _build_finhealth_prompt(
+
+        with st.expander("Generate analysis (GPT‑5)", expanded=True):
+            model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
+
+            generate = st.button("Generate Benchmarking Analysis", type="primary", key="gen_bm_btn")
+            if generate:
+                # Build prompts (same as before)
+                system_prompt, user_prompt = _build_finhealth_prompt(
                     company, exch, ind, str(fy_sel), assembled_for_llm, mtype
                 )
-                text = _call_openai(sys_p, usr_p, model=model)
-                if text:
-                    st.markdown(text)
+                api_key_for_call = _get_openai_api_key()
+                if not api_key_for_call:
+                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
                 else:
-                    st.info("(Set OPENAI_API_KEY to enable GPT analysis.)")
+                    with st.spinner("Calling OpenAI and generating suggestions..."):
+                        text, err = _call_openai(
+                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
+                        )
+
+                    if err:
+                        st.error(err)
+                    else:
+                        render = (text or "").strip()
+                        if not render:
+                            st.warning(
+                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                                "or lowering `max_tokens` to stay within the model’s context window."
+                            )
+                            with st.expander("Debug info"):
+                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+                        else:
+                            st.markdown("##### Benchmarking Analysis")
+                            st.markdown(render)
+                            st.session_state["ai_bm_suggestions"] = text
+
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
@@ -913,12 +937,13 @@ def main():
             with st.expander("Skipped YoY metrics (missing in company data / industry percentiles)", expanded=False):
                 st.write(", ".join(skipped_yoy))
 
-        # YoY GPT
-        with st.expander("Auto analysis (GPT‑5)", expanded=True):
-            model = st.text_input("Model (YoY)", os.environ.get("OPENAI_MODEL", "gpt-5"))
-            if st.checkbox("Generate YoY analysis automatically", value=True, key="yoy_ai_chk"):
-                p_row_latest = _try_get_percentile_row(pct_wide, exch, ind, str(fy_sel))
+        with st.expander("Generate YoY analysis (GPT‑5)", expanded=True):
+            model = st.text_input("Model (YoY)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
 
+            generate = st.button("Generate YoY Analysis", type="primary", key="gen_yoy_btn")
+            if generate:
+                # Assemble YoY snapshot for latest FY context (unchanged logic)
+                p_row_latest = _try_get_percentile_row(pct_wide, exch, ind, str(fy_sel))
                 comp_last = company_series[company_series["FY"] == str(fy_sel)]
                 if comp_last.empty and not company_series.empty:
                     comp_last = company_series.iloc[[-1]]
@@ -934,29 +959,49 @@ def main():
                         p25 = pd.to_numeric(p_row_latest[(c, "p25")], errors="coerce")
                         p50 = pd.to_numeric(p_row_latest[(c, "p50")], errors="coerce")
                         p75 = pd.to_numeric(p_row_latest[(c, "p75")], errors="coerce")
-                    assembled.append(
-                        {
-                            "Metrics_Name": n,
-                            "Metrics_Col": c,
-                            "Metrics_Grade": g,
-                            "value": float(val) if pd.notna(val) else None,
-                            "value_str": (f"{val:.4g}" if pd.notna(val) else "NA"),
-                            "p25": float(p25) if pd.notna(p25) else None,
-                            "p50": float(p50) if pd.notna(p50) else None,
-                            "p75": float(p75) if pd.notna(p75) else None,
-                            "p25_str": (f"{p25:.4g}" if pd.notna(p25) else "NA"),
-                            "p50_str": (f"{p50:.4g}" if pd.notna(p50) else "NA"),
-                            "p75_str": (f"{p75:.4g}" if pd.notna(p75) else "NA"),
-                            "bucket": _classify_bucket(val, p25, p50, p75, g),
-                        }
-                    )
 
-                sys_p, usr_p = _build_finhealth_prompt(company, exch, ind, str(fy_sel), assembled, mtype2)
-                text = _call_openai(sys_p, usr_p, model=model)
-                if text:
-                    st.markdown(text)
+                    assembled.append({
+                        "Metrics_Name": n, "Metrics_Col": c, "Metrics_Grade": g,
+                        "value": None if pd.isna(val) else float(val),
+                        "value_str": ("NA" if pd.isna(val) else f"{val:.4g}"),
+                        "p25": None if pd.isna(p25) else float(p25),
+                        "p50": None if pd.isna(p50) else float(p50),
+                        "p75": None if pd.isna(p75) else float(p75),
+                        "p25_str": ("NA" if pd.isna(p25) else f"{p25:.4g}"),
+                        "p50_str": ("NA" if pd.isna(p50) else f"{p50:.4g}"),
+                        "p75_str": ("NA" if pd.isna(p75) else f"{p75:.4g}"),
+                        "bucket": _classify_bucket(val, p25, p50, p75, g),
+                    })
+
+                system_prompt, user_prompt = _build_finhealth_prompt(
+                    company, exch, ind, str(fy_sel), assembled, mtype2
+                )
+
+                api_key_for_call = _get_openai_api_key()
+                if not api_key_for_call:
+                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
                 else:
-                    st.info("(Set OPENAI_API_KEY to enable GPT analysis.)")
+                    with st.spinner("Calling OpenAI and generating suggestions..."):
+                        text, err = _call_openai(
+                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
+                        )
+
+                    if err:
+                        st.error(err)
+                    else:
+                        render = (text or "").strip()
+                        if not render:
+                            st.warning(
+                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                                "or lowering `max_tokens` to stay within the model’s context window."
+                            )
+                            with st.expander("Debug info"):
+                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+                        else:
+                            st.markdown("##### YoY Analysis")
+                            st.markdown(render)
+                            st.session_state["ai_yoy_suggestions"] = text
+
 
     # -------------------------------------------------------------------------
     # TAB 3 — Suggested Audit Areas (Top 5)
@@ -1009,14 +1054,38 @@ def main():
             )
 
         with st.expander("Generate with GPT‑5", expanded=True):
-            model = st.text_input("Model (Audit)", os.environ.get("OPENAI_MODEL", "gpt-5"))
-            if st.button("Generate Top 5 Audit Areas", type="primary"):
-                system, user = _build_audit_prompt_allmetrics(company, exch, ind, str(fy_sel), assembled)
-                text = _call_openai(system, user, model=model, max_output_tokens=900)
-                if text:
-                    st.markdown(text)
+            model = st.text_input("Model (Audit)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+
+            generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
+            if generate:
+                system_prompt, user_prompt = _build_audit_prompt_allmetrics(
+                    company, exch, ind, str(fy_sel), assembled
+                )
+                api_key_for_call = _get_openai_api_key()
+                if not api_key_for_call:
+                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
                 else:
-                    st.info("(Set OPENAI_API_KEY to enable GPT analysis.)")
+                    with st.spinner("Calling OpenAI and generating suggestions..."):
+                        text, err = _call_openai(
+                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=900
+                        )
+
+                    if err:
+                        st.error(err)
+                    else:
+                        render = (text or "").strip()
+                        if not render:
+                            st.warning(
+                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                                "or lowering `max_tokens` to stay within the model’s context window."
+                            )
+                            with st.expander("Debug info"):
+                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+                        else:
+                            st.markdown("##### Suggested Auditable Areas")
+                            st.markdown(render)
+                            st.session_state["ai_audit_suggestions"] = text
+
 
 
 # =============================================================================
