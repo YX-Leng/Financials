@@ -621,7 +621,7 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
     )
 
     # Prefer a small K; you can make this a UI control
-    signals = _synthesize_finhealth_signals(metrics_rows, top_k=5)
+    signals = _synthesize_finhealth_signals(metrics_rows, top_k=3)
 
     header = (
         f"Company: {company}\n"
@@ -703,10 +703,10 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
-                                       max_types=5, counts_only=False):
+                                       max_types=3, counts_only=False):
     system = (
         "You are an experienced internal auditor. Focus only on the provided worst indicators by metric type. "
-        "Propose the top five auditable areas with the highest risk and business impact. "
+        "Propose the top 3 auditable areas with the highest risk and business impact. "
         "Avoid external audit or generic compliance steps. "
         "Do not use acronyms or abbreviations in your response. Always write out the full term. "
         "Be specific about risks, testing steps, and data sources."
@@ -719,7 +719,7 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
         f"Industry: {industry}\n"
         f"Fiscal year: {fy}\n"
         "Only the worst indicator per metric type is considered below.\n"
-        "Output exactly five auditable areas.\n"
+        "Output exactly 3 auditable areas.\n"
     )
 
     if counts_only:
