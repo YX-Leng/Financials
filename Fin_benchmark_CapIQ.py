@@ -499,7 +499,7 @@ def _get_openai_api_key():
 
     return None
 
-def _call_openai(system_prompt: str, user_prompt: str, api_key: str = None, model: str = None, max_output_tokens: int = 600) -> str:
+def _call_openai(system_prompt: str, user_prompt: str, model: str = None, max_output_tokens: int = 600) -> str:
     key = _get_openai_api_key()
     if not key:
         return ""
@@ -860,7 +860,7 @@ def main():
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = _call_openai(
-                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
+                            system_prompt, user_prompt, model=model, max_tokens=600
                         )
 
                     if err:
@@ -983,7 +983,7 @@ def main():
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = _call_openai(
-                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
+                            system_prompt, user_prompt, model=model, max_tokens=600
                         )
 
                     if err:
@@ -1067,7 +1067,7 @@ def main():
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = _call_openai(
-                            system_prompt, user_prompt, api_key=api_key_for_call, model=model, max_tokens=600
+                            system_prompt, user_prompt, model=model, max_tokens=600
                         )
 
                     if err:
