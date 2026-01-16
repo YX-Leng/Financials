@@ -5,7 +5,7 @@ import socket
 import subprocess
 import webbrowser
 from typing import List, Tuple, Dict, Optional
-
+import math 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -338,7 +338,6 @@ def _plot_benchmark(
     label_bordercolor="#1d4ed8",
     label_font_color="#1d4ed8"
 ):
-    import math
     import pandas as _pd
     import numpy as _np
     import plotly.graph_objects as go
@@ -581,7 +580,6 @@ def _call_openai(system_prompt: str,
 # --- Back-end synthesis of the financial health signals ---
 def _synthesize_finhealth_signals(metrics_rows, top_k=8):
     """Return a compact list of 'signals' ranked by severity without dumping all metrics."""
-    import math
 
     def to_float(x):
         try:
@@ -623,7 +621,7 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
     )
 
     # Prefer a small K; you can make this a UI control
-    signals = _synthesize_finhealth_signals(metrics_rows, top_k=3)
+    signals = _synthesize_finhealth_signals(metrics_rows, top_k=5)
 
     header = (
         f"Company: {company}\n"
@@ -638,32 +636,113 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
 
     return system, user
 
+# --- Select the worst-performing indicator per metric type ---
+def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
-def _build_audit_prompt_allmetrics(company, exchange, industry, fy, summary_rows):
+    # Build a map from metric column -> Type (case-insensitive, trimmed)
+    col_to_type = {}
+    for _, r in mtype_df.iterrows():
+        c = str(r.get("Metrics_Col", "")).strip()
+        t = str(r.get("Type", "")).strip() or "Uncategorized"
+        if c:
+            col_to_type[c] = t
+
+    def _to_float(x):
+        try:
+            return float(str(x).replace(",", "").strip())
+        except Exception:
+            return float("nan")
+
+    def _bucket_rank(b):
+        # Needs Improvement > Satisfactory > Healthy
+        order = {"Needs Improvement": 3, "Satisfactory": 2, "Healthy": 1}
+        return order.get(str(b).strip(), 0)
+
+    def _badness(row):
+        grade = str(row.get("Metrics_Grade", "")).strip().lower()
+        v = _to_float(row.get("value", row.get("value_str")))
+        p50 = _to_float(row.get("p50", row.get("p50_str")))
+        if math.isnan(v) or math.isnan(p50):
+            return 0.0
+        if grade == "lower":
+            # higher than p50 is bad; clamp at 0 for better-than-median
+            return max(v - p50, 0.0)
+        else:
+            # lower than p50 is bad
+            return max(p50 - v, 0.0)
+
+    # Group rows by Type
+    by_type = {}
+    for r in summary_rows:
+        c = str(r.get("Metrics_Col", "")).strip()
+        t = col_to_type.get(c, "Uncategorized")
+        r = dict(r)  # shallow copy
+        r["Type"] = t
+        by_type.setdefault(t, []).append(r)
+
+    # Pick the worst per Type: prefer Needs Improvement; else worst badness
+    worst_per_type = []
+    for t, items in by_type.items():
+        # 1) try Needs Improvement first
+        ni = [x for x in items if str(x.get("bucket","")) == "Needs Improvement"]
+        if ni:
+            cand = max(ni, key=lambda x: (_bucket_rank(x.get("bucket")), _badness(x)))
+        else:
+            # 2) otherwise pick the single worst by badness (ties broken by bucket rank)
+            cand = max(items, key=lambda x: (_badness(x), _bucket_rank(x.get("bucket"))))
+        worst_per_type.append(cand)
+
+    # Rank the chosen types globally: most severe first
+    worst_per_type.sort(key=lambda x: (_bucket_rank(x.get("bucket")), _badness(x)), reverse=True)
+
+    # Optional cap
+    if isinstance(max_types, int) and max_types > 0:
+        worst_per_type = worst_per_type[:max_types]
+
+    return worst_per_type
+
+
+def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
+                                       max_types=5, counts_only=False):
     system = (
-        "You are an experienced internal auditor. Focusing on the metrics and benchmarks that needs improvement, "
-        "propose the TOP 3 auditable areas with highest risk and business impact. "
-        "Avoid external audit or generic compliance steps."
-        "Do not use acronyms or abbreviations in your response. Always write out the full term."
+        "You are an experienced internal auditor. Focus only on the provided worst indicators by metric type. "
+        "Propose the top five auditable areas with the highest risk and business impact. "
+        "Avoid external audit or generic compliance steps. "
+        "Do not use acronyms or abbreviations in your response. Always write out the full term. "
         "Be specific about risks, testing steps, and data sources."
     )
-    bullets = []
-    for r in summary_rows:
-        bullets.append(
-            f"- {r['Metrics_Name']} ({r['Metrics_Col']}): value={r['value_str']}  "
-            f"p25={r['p25_str']}, p50={r['p50_str']}, p75={r['p75_str']}  "
-            f"grade={r['Metrics_Grade']}  bucket={r['bucket']}"
-        )
-    user = (
-        f"Company: {company}  \n"
-        f"Exchange: {exchange}  \n"
-        f"Industry: {industry}  \n"
-        f"FY: {fy}\n"
-        "Use all metrics below (assume there are 39 metrics). Output exactly 5 audit areas.\n"
-        + "\n".join(bullets)
-    )
-    return system, user
 
+    chosen = _pick_worst_per_type(summary_rows, mtype_df, max_types=max_types)
+
+    # Minimal context header
+    header = (
+        f"Industry: {industry}\n"
+        f"Fiscal year: {fy}\n"
+        "Only the worst indicator per metric type is considered below.\n"
+        "Output exactly five auditable areas.\n"
+    )
+
+    if counts_only:
+        # Extremely short: just a count to anchor severity; no list at all
+        n_types = len(chosen)
+        n_ni = sum(1 for r in chosen if str(r.get("bucket","")) == "Needs Improvement")
+        user = (
+            header
+            + f"Synthesized summary: {n_types} metric types considered; "
+              f"{n_ni} show Needs Improvement. Do not invent numeric details."
+        )
+        return system, user
+
+    # Compact bullets (one line per type) without dumping full percentiles
+    lines = []
+    for r in chosen:
+        lines.append(
+            f"- {r.get('Type','Uncategorized')}: {r['Metrics_Name']} "
+            f"(value={r['value_str']}; grade={r['Metrics_Grade']}; bucket={r['bucket']})"
+        )
+
+    user = header + "\n".join(lines)
+    return system, user
 
 # =============================================================================
 # Utility (numeric validation)
@@ -1032,72 +1111,7 @@ def main():
             with st.expander("Skipped YoY metrics (missing in company data / industry percentiles)", expanded=False):
                 st.write(", ".join(skipped_yoy))
 
-        with st.expander("Generate YoY analysis", expanded=True):
-            model = st.text_input("Model (YoY)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
-
-            generate = st.button("Generate YoY Analysis", type="primary", key="gen_yoy_btn")
-            if generate:
-                # Assemble YoY snapshot for latest FY context (unchanged logic)
-                p_row_latest = _try_get_percentile_row(pct_wide, exch, ind, str(fy_sel))
-                comp_last = company_series[company_series["FY"] == str(fy_sel)]
-                if comp_last.empty and not company_series.empty:
-                    comp_last = company_series.iloc[[-1]]
-
-                assembled = []
-                for _, r in subset2.iterrows():
-                    c = str(r["Metrics_Col"]).strip()
-                    n = str(r["Metrics_Name"]).strip()
-                    g = str(r["Metrics_Grade"]).strip()
-                    val = pd.to_numeric(comp_last.iloc[0].get(c, np.nan), errors="coerce") if not comp_last.empty else np.nan
-                    p25 = p50 = p75 = np.nan
-                    if p_row_latest is not None and (c, "p25") in p_row_latest.index:
-                        p25 = pd.to_numeric(p_row_latest[(c, "p25")], errors="coerce")
-                        p50 = pd.to_numeric(p_row_latest[(c, "p50")], errors="coerce")
-                        p75 = pd.to_numeric(p_row_latest[(c, "p75")], errors="coerce")
-
-                    assembled.append({
-                        "Metrics_Name": n, "Metrics_Col": c, "Metrics_Grade": g,
-                        "value": None if pd.isna(val) else float(val),
-                        "value_str": ("NA" if pd.isna(val) else f"{val:.4g}"),
-                        "p25": None if pd.isna(p25) else float(p25),
-                        "p50": None if pd.isna(p50) else float(p50),
-                        "p75": None if pd.isna(p75) else float(p75),
-                        "p25_str": ("NA" if pd.isna(p25) else f"{p25:.4g}"),
-                        "p50_str": ("NA" if pd.isna(p50) else f"{p50:.4g}"),
-                        "p75_str": ("NA" if pd.isna(p75) else f"{p75:.4g}"),
-                        "bucket": _classify_bucket(val, p25, p50, p75, g),
-                    })
-
-                system_prompt, user_prompt = _build_finhealth_prompt(
-                    company, exch, ind, str(fy_sel), assembled, mtype2
-                )
-
-                api_key_for_call = _get_openai_api_key()
-                if not api_key_for_call:
-                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
-                else:
-                    with st.spinner("Calling OpenAI and generating suggestions..."):
-                        text, err = _call_openai(
-                            system_prompt, user_prompt, model=model, max_tokens=600
-                        )
-
-                    if err:
-                        st.error(err)
-                    else:
-                        render = (text or "").strip()
-                        if not render:
-                            st.warning(
-                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
-                                "or lowering `max_tokens` to stay within the model’s context window."
-                            )
-                            with st.expander("Debug info"):
-                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-                        else:
-                            st.markdown("##### YoY Analysis")
-                            st.markdown(render)
-                            st.session_state["ai_yoy_suggestions"] = text
-
-
+    
     # -------------------------------------------------------------------------
     # TAB 3 — Suggested Audit Areas (Top 5)
     # -------------------------------------------------------------------------
@@ -1158,7 +1172,7 @@ def main():
 
             generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
             if generate:
-                system_prompt, user_prompt = _build_audit_prompt_allmetrics(
+                system_prompt, user_prompt = _build_audit_prompt(
                     company, exch, ind, str(fy_sel), assembled
                 )
                 api_key_for_call = _get_openai_api_key()
