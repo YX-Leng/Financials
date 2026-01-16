@@ -484,11 +484,20 @@ def _plot_yoy(industry_df: pd.DataFrame, company_df: pd.DataFrame, metric: str, 
 # GPT stubs (unchanged behavior)
 # =============================================================================
 def _get_openai_api_key():
+    # 1. Try Streamlit secrets
     try:
-        return st.secrets["openai"]["api_key"]
+        key = st.secrets["openai"]["api_key"]
+        if key:
+            return key
     except Exception:
-        return os.environ.get("OPENAI_API_KEY", "")
+        pass
 
+    # 2. Try environment variable
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
+        return key
+
+    return None
 
 def _call_openai(system_prompt: str, user_prompt: str, model: str = None, max_output_tokens: int = 600) -> str:
     key = _get_openai_api_key()
