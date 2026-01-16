@@ -578,26 +578,66 @@ def _call_openai(system_prompt: str,
     # If both attempts failed
     return "", "OpenAI call failed: " + " | ".join(errors) if errors else "OpenAI call failed for unknown reasons."
 
+# --- Back-end synthesis of the financial health signals ---
+def _synthesize_finhealth_signals(metrics_rows, top_k=8):
+    """Return a compact list of 'signals' ranked by severity without dumping all metrics."""
+    import math
 
-def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
+    def to_float(x):
+        try:
+            return float(str(x).replace(",", "").strip())
+        except Exception:
+            return float("nan")
+
+    def score(m):
+        v  = to_float(m.get("value", m.get("value_str")))
+        p50 = to_float(m.get("p50", m.get("p50_str")))
+        s = 0.0
+        # emphasize Needs Improvement
+        if str(m.get("bucket", "")).strip() == "Needs Improvement":
+            s += 10.0
+        # distance from median
+        if not math.isnan(v) and not math.isnan(p50):
+            s += abs(v - p50)
+        return s
+
+    # Rank by severity and take top_k
+    rows = sorted(metrics_rows, key=score, reverse=True)[:top_k]
+
+    # Turn into compact human-readable signals (no quartiles pasted)
+    signals = []
+    for r in rows:
+        signals.append({
+            "name": r["Metrics_Name"],
+            "bucket": r.get("bucket", "—"),
+            "grade": r.get("Metrics_Grade", "—"),
+            # keep only the essential single value if present; do not include all percentiles
+            "value": r.get("value_str", "NA"),
+        })
+    return signals
+
+def _build_finhealth_prompt_compact(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
         "You are a senior financial analyst and internal auditor. "
-        "Assess the company's financial health using the metrics provided and their industry percentiles. "
+        "Use the provided synthesized signals to assess the company. "
         "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
     )
-    lines = []
-    for r in metrics_rows:
-        lines.append(
-            f"- {r['Metrics_Name']} ({r['Metrics_Col']}): value={r['value_str']}  "
-            f"p25={r['p25_str']}, p50={r['p50_str']}, p75={r['p75_str']}  "
-            f"grade={r['Metrics_Grade']}  bucket={r['bucket']}"
-        )
+
+    signals = _synthesize_finhealth_signals(metrics_rows, top_k=8)
+
+    # Short, structured context; no long metric-by-metric listing
+    bullet_lines = [f"- {s['name']}: bucket={s['bucket']}, grade={s['grade']}, value={s['value']}" for s in signals]
+
     user = (
-        f"Company: {company}, "
-        f"Exchange: {exchange}, "
-        f"Industry: {industry}, "
+        f"Company: {company}\n"
+        f"Exchange: {exchange}\n"
+        f"Industry: {industry}\n"
         f"FY: {fy}\n"
-        f"Metrics type selected: {metrics_type_name}\n" + "\n".join(lines)
+        f"Metrics type selected: {metrics_type_name}\n"
+        "Use only these synthesized signals (do not request additional metrics):\n"
+        + "\n".join(bullet_lines)
+        + "\n"
+        "Deliver: a tight assessment and 3 priority actions. Do not invent numeric details."
     )
     return system, user
 
