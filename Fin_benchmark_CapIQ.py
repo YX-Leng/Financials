@@ -499,26 +499,86 @@ def _get_openai_api_key():
 
     return None
 
-def _call_openai(system_prompt: str, user_prompt: str, model: str = None, max_output_tokens: int = 600) -> str:
+def _call_openai(system_prompt: str,
+                 user_prompt: str,
+                 model: str = None,
+                 max_tokens: int = 600,
+                 max_output_tokens: int | None = None,
+                 prefer: str = "auto") -> tuple[str, str | None]:
+
     key = _get_openai_api_key()
     if not key:
-        return ""
+        return "", "OpenAI API key is missing. Please set it in your environment or Streamlit secrets."
+
+    # Decide a single token budget we can reuse for both APIs
+    token_budget = max_tokens if max_tokens is not None else 600
+    if max_output_tokens is None:
+        max_output_tokens = token_budget
+
     try:
         from openai import OpenAI
+    except Exception as e:
+        return "", f"Failed to import OpenAI SDK: {e}"
+
+    try:
         client = OpenAI(api_key=key)
-        mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
-        out = client.chat.completions.create(
-            model=mdl,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=max_tokens,
-        )
-        return out.choices[0].message.content
-    except Exception:
-        return "", f"OpenAI call failed: {e}"
+        mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-4o").strip()
+    except Exception as e:
+        return "", f"Failed to initialize OpenAI client: {e}"
+
+    errors: list[str] = []
+
+    # --- 1) Try Chat Completions (if allowed by 'prefer')
+    if prefer in ("auto", "chat"):
+        try:
+            resp = client.chat.completions.create(
+                model=mdl,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=token_budget,   # chat API expects 'max_tokens'
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return text, None
+        except Exception as e:
+            errors.append(f"chat.completions failed: {e}")
+            if prefer == "chat":
+                return "", "OpenAI chat.completions error: " + str(e)
+
+    # --- 2) Fall back to Responses API (if allowed)
+    if prefer in ("auto", "responses"):
+        try:
+            # Responses API expects 'max_output_tokens'
+            resp = client.responses.create(
+                model=mdl,
+                input=f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}",
+                temperature=0.2,
+                max_output_tokens=max_output_tokens,
+            )
+
+            # Prefer the convenience accessor if present
+            text = getattr(resp, "output_text", None)
+            if not text:
+                # Fallback extraction for SDKs that structure output differently
+                text_parts = []
+                try:
+                    for item in getattr(resp, "output", []) or []:
+                        for c in getattr(item, "content", []) or []:
+                            if getattr(c, "type", "") == "output_text":
+                                text_parts.append(getattr(c, "text", ""))
+                except Exception:
+                    pass
+                text = "".join(text_parts)
+            return (text or "").strip(), None
+        except Exception as e:
+            errors.append(f"responses.create failed: {e}")
+            if prefer == "responses":
+                return "", "OpenAI responses API error: " + str(e)
+
+    # If both attempts failed
+    return "", "OpenAI call failed: " + " | ".join(errors) if errors else "OpenAI call failed for unknown reasons."
 
 
 def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
