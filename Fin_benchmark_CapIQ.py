@@ -582,8 +582,8 @@ def _call_openai(system_prompt: str,
 def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
         "You are a senior financial analyst and internal auditor. "
-        "Assess the company's financial health strictly using the metrics provided and their industry percentiles. "
-        "Write in plain business English, concise and action-focused. Conclude with 3–5 priority actions."
+        "Assess the company's financial health using the metrics provided and their industry percentiles. "
+        "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
     )
     lines = []
     for r in metrics_rows:
@@ -593,9 +593,9 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
             f"grade={r['Metrics_Grade']}  bucket={r['bucket']}"
         )
     user = (
-        f"Company: {company}  \n"
-        f"Exchange: {exchange}  \n"
-        f"Industry: {industry}  \n"
+        f"Company: {company}, "
+        f"Exchange: {exchange}, "
+        f"Industry: {industry}, "
         f"FY: {fy}\n"
         f"Metrics type selected: {metrics_type_name}\n" + "\n".join(lines)
     )
@@ -903,7 +903,7 @@ def main():
 
 
 
-        with st.expander("Generate analysis (GPT‑5)", expanded=True):
+        with st.expander("Generate analysis", expanded=True):
             model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
 
             generate = st.button("Generate Benchmarking Analysis", type="primary", key="gen_bm_btn")
@@ -995,7 +995,7 @@ def main():
             with st.expander("Skipped YoY metrics (missing in company data / industry percentiles)", expanded=False):
                 st.write(", ".join(skipped_yoy))
 
-        with st.expander("Generate YoY analysis (GPT‑5)", expanded=True):
+        with st.expander("Generate YoY analysis", expanded=True):
             model = st.text_input("Model (YoY)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
 
             generate = st.button("Generate YoY Analysis", type="primary", key="gen_yoy_btn")
@@ -1093,7 +1093,11 @@ def main():
                 p25 = pd.to_numeric(p_row[(c, "p25")], errors="coerce")
                 p50 = pd.to_numeric(p_row[(c, "p50")], errors="coerce")
                 p75 = pd.to_numeric(p_row[(c, "p75")], errors="coerce")
-
+  
+            bucket = _classify_bucket(val, p25, p50, p75, g)
+            if bucket != "Needs Improvement":
+                continue 
+            
             assembled.append(
                 {
                     "Metrics_Name": n,
@@ -1107,8 +1111,9 @@ def main():
                     "p25_str": (f"{p25:.4g}" if pd.notna(p25) else "NA"),
                     "p50_str": (f"{p50:.4g}" if pd.notna(p50) else "NA"),
                     "p75_str": (f"{p75:.4g}" if pd.notna(p75) else "NA"),
-                    "bucket": _classify_bucket(val, p25, p50, p75, g),
+                    "bucket": bucket,
                 }
+                
             )
 
         with st.expander("Generate with GPT‑5", expanded=True):
