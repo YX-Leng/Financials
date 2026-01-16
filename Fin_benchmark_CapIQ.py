@@ -615,7 +615,7 @@ def _synthesize_finhealth_signals(metrics_rows, top_k=8):
         for r in ranked
     ]
 
-def _build_finhealth_prompt_compact(company, exchange, industry, fy, metrics_rows, metrics_type_name):
+def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
         "You are a senior financial analyst and internal auditor. "
         "Use the provided synthesized signals (already computed by the back end) to assess the company. "
