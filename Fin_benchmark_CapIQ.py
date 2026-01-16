@@ -577,64 +577,6 @@ def _call_openai(system_prompt: str,
     # If both attempts failed
     return "", "OpenAI call failed: " + " | ".join(errors) if errors else "OpenAI call failed for unknown reasons."
 
-# --- Back-end synthesis of the financial health signals ---
-def _synthesize_finhealth_signals(metrics_rows, top_k=8):
-    """Return a compact list of 'signals' ranked by severity without dumping all metrics."""
-
-    def to_float(x):
-        try:
-            return float(str(x).replace(",", "").strip())
-        except Exception:
-            return float("nan")
-
-    def score(m):
-        v   = to_float(m.get("value", m.get("value_str")))
-        p50 = to_float(m.get("p50",  m.get("p50_str")))
-        s = 0.0
-        # emphasize Needs Improvement
-        if str(m.get("bucket", "")).strip() == "Needs Improvement":
-            s += 10.0
-        # distance from median (if both present)
-        if not math.isnan(v) and not math.isnan(p50):
-            s += abs(v - p50)
-        return s
-
-    # rank and keep top_k
-    ranked = sorted(metrics_rows, key=score, reverse=True)[:top_k]
-
-    # return compact, model-friendly signals (no full percentile dump)
-    return [
-        {
-            "name":  r["Metrics_Name"],
-            "bucket": r.get("bucket", "—"),
-            "grade":  r.get("Metrics_Grade", "—"),
-            "value":  r.get("value_str", "NA"),
-        }
-        for r in ranked
-    ]
-
-def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
-    system = (
-        "You are a senior financial analyst and internal auditor. "
-        "Use the provided synthesized signals to assess the company. "
-        "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
-    )
-
-    # Prefer a small K; you can make this a UI control
-    signals = _synthesize_finhealth_signals(metrics_rows, top_k=3)
-
-    header = (
-        f"Company: {company}\n"
-        f"Exchange: {exchange}\n"
-        f"Industry: {industry}\n"
-        f"FY: {fy}\n"
-        f"Metrics type selected: {metrics_type_name}\n"
-        "Use only the synthesized signals below. Do not invent numeric details.\n"
-    )
-    lines = [f"- {s['name']}: bucket={s['bucket']}, grade={s['grade']}, value={s['value']}" for s in signals]
-    user = header + "\n".join(lines)
-
-    return system, user
 
 # --- Select the worst-performing indicator per metric type ---
 def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
@@ -1016,43 +958,6 @@ def main():
             if skipped_bm:
                 with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
                     st.write(", ".join(skipped_bm))
-
-
-
-        with st.expander("Generate analysis", expanded=True):
-            model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
-
-            generate = st.button("Generate Benchmarking Analysis", type="primary", key="gen_bm_btn")
-            if generate:
-                # Build prompts (same as before)
-                system_prompt, user_prompt = _build_finhealth_prompt(
-                    company, exch, ind, str(fy_sel), assembled_for_llm, mtype
-                )
-                api_key_for_call = _get_openai_api_key()
-                if not api_key_for_call:
-                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
-                else:
-                    with st.spinner("Calling OpenAI and generating suggestions..."):
-                        text, err = _call_openai(
-                            system_prompt, user_prompt, model=model, max_tokens=600
-                        )
-
-                    if err:
-                        st.error(err)
-                    else:
-                        render = (text or "").strip()
-                        if not render:
-                            st.warning(
-                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
-                                "or lowering `max_tokens` to stay within the model’s context window."
-                            )
-                            with st.expander("Debug info"):
-                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-                        else:
-                            st.markdown("##### Benchmarking Analysis")
-                            st.markdown(render)
-                            st.session_state["ai_bm_suggestions"] = text
-
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
