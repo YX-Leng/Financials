@@ -1173,7 +1173,7 @@ def main():
             generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
             if generate:
                 system_prompt, user_prompt = _build_audit_prompt(
-                    company, exch, ind, str(fy_sel), assembled
+                    company, exch, ind, str(fy_sel), assembled, mtype_df
                 )
                 api_key_for_call = _get_openai_api_key()
                 if not api_key_for_call:
