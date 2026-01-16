@@ -618,8 +618,7 @@ def _synthesize_finhealth_signals(metrics_rows, top_k=8):
 
 def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
-        "You are a senior financial analyst and internal auditor. "
-        "Use the provided synthesized signals to assess the company. "
+        "You are a senior financial analyst. Use the provided synthesized signals to assess the company."
         "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
     )
 
@@ -629,15 +628,13 @@ def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metri
     bullet_lines = [f"- {s['name']}: bucket={s['bucket']}, grade={s['grade']}, value={s['value']}" for s in signals]
 
     user = (
-        f"Company: {company}\n"
-        f"Exchange: {exchange}\n"
-        f"Industry: {industry}\n"
-        f"FY: {fy}\n"
+        f"Company: {company}, "
+        f"Exchange: {exchange}, "
+        f"Industry: {industry}, "
+        f"FY: {fy}, "
         f"Metrics type selected: {metrics_type_name}\n"
-        "Use only these synthesized signals (do not request additional metrics):\n"
         + "\n".join(bullet_lines)
         + "\n"
-        "Deliver: a tight assessment and 3 priority actions. Do not invent numeric details."
     )
     return system, user
 
