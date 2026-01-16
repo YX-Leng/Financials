@@ -647,11 +647,10 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
                                        max_types=3, counts_only=False):
     system = (
-        "You are an experienced internal auditor. Focus only on the provided worst indicators by metric type. "
-        "Propose the top 3 auditable areas with the highest risk and business impact. "
-        "Avoid external audit or generic compliance steps. "
-        "Do not use acronyms or abbreviations in your response. Always write out the full term. "
-        "Be specific about risks, testing steps, and data sources."
+        "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
+        "Given company data and industry benchmarks, identify the top 3 control areas for internal audit focus. "
+        "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
+        "Do not use acronyms or abbreviations in your response. Always write out the full term."
     )
 
     chosen = _pick_worst_per_type(summary_rows, mtype_df, max_types=max_types)
@@ -660,20 +659,7 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
     header = (
         f"Industry: {industry}\n"
         f"Fiscal year: {fy}\n"
-        "Only the worst indicator per metric type is considered below.\n"
-        "Output exactly 3 auditable areas.\n"
     )
-
-    if counts_only:
-        # Extremely short: just a count to anchor severity; no list at all
-        n_types = len(chosen)
-        n_ni = sum(1 for r in chosen if str(r.get("bucket","")) == "Needs Improvement")
-        user = (
-            header
-            + f"Synthesized summary: {n_types} metric types considered; "
-              f"{n_ni} show Needs Improvement. Do not invent numeric details."
-        )
-        return system, user
 
     # Compact bullets (one line per type) without dumping full percentiles
     lines = []
