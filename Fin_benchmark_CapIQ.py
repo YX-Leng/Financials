@@ -590,52 +590,52 @@ def _synthesize_finhealth_signals(metrics_rows, top_k=8):
             return float("nan")
 
     def score(m):
-        v  = to_float(m.get("value", m.get("value_str")))
-        p50 = to_float(m.get("p50", m.get("p50_str")))
+        v   = to_float(m.get("value", m.get("value_str")))
+        p50 = to_float(m.get("p50",  m.get("p50_str")))
         s = 0.0
         # emphasize Needs Improvement
         if str(m.get("bucket", "")).strip() == "Needs Improvement":
             s += 10.0
-        # distance from median
+        # distance from median (if both present)
         if not math.isnan(v) and not math.isnan(p50):
             s += abs(v - p50)
         return s
 
-    # Rank by severity and take top_k
-    rows = sorted(metrics_rows, key=score, reverse=True)[:top_k]
+    # rank and keep top_k
+    ranked = sorted(metrics_rows, key=score, reverse=True)[:top_k]
 
-    # Turn into compact human-readable signals (no quartiles pasted)
-    signals = []
-    for r in rows:
-        signals.append({
-            "name": r["Metrics_Name"],
+    # return compact, model-friendly signals (no full percentile dump)
+    return [
+        {
+            "name":  r["Metrics_Name"],
             "bucket": r.get("bucket", "—"),
-            "grade": r.get("Metrics_Grade", "—"),
-            # keep only the essential single value if present; do not include all percentiles
-            "value": r.get("value_str", "NA"),
-        })
-    return signals
+            "grade":  r.get("Metrics_Grade", "—"),
+            "value":  r.get("value_str", "NA"),
+        }
+        for r in ranked
+    ]
 
-def _build_finhealth_prompt(company, exchange, industry, fy, metrics_rows, metrics_type_name):
+def _build_finhealth_prompt_compact(company, exchange, industry, fy, metrics_rows, metrics_type_name):
     system = (
-        "You are a senior financial analyst. Use the provided synthesized signals to assess the company."
-        "Write in plain business English, concise and action-focused. Conclude with 3 priority actions."
+        "You are a senior financial analyst and internal auditor. "
+        "Use the provided synthesized signals (already computed by the back end) to assess the company. "
+        "Write in plain business English, concise and action-focused. Conclude with 3–5 priority actions."
     )
 
-    signals = _synthesize_finhealth_signals(metrics_rows, top_k=8)
+    # Prefer a small K; you can make this a UI control
+    signals = _synthesize_finhealth_signals(metrics_rows, top_k=6)
 
-    # Short, structured context; no long metric-by-metric listing
-    bullet_lines = [f"- {s['name']}: bucket={s['bucket']}, grade={s['grade']}, value={s['value']}" for s in signals]
-
-    user = (
-        f"Company: {company}, "
-        f"Exchange: {exchange}, "
-        f"Industry: {industry}, "
-        f"FY: {fy}, "
+    header = (
+        f"Company: {company}\n"
+        f"Exchange: {exchange}\n"
+        f"Industry: {industry}\n"
+        f"FY: {fy}\n"
         f"Metrics type selected: {metrics_type_name}\n"
-        + "\n".join(bullet_lines)
-        + "\n"
+        "Use only the synthesized signals below. Do not invent numeric details.\n"
     )
+    lines = [f"- {s['name']}: bucket={s['bucket']}, grade={s['grade']}, value={s['value']}" for s in signals]
+    user = header + "\n".join(lines)
+
     return system, user
 
 
