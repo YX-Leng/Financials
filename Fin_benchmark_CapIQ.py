@@ -336,32 +336,59 @@ def _plot_benchmark(
     # white pill label by default
     label_bgcolor="#FFFFFF",
     label_bordercolor="#1d4ed8",
-    label_font_color="#1d4ed8"
+    label_font_color="#1d4ed8",
+    domain_mode: str = "auto",   # "auto" | "minmax" | "whisker"
+    pad_ratio: float = 0.08      # ~8% padding around chosen domain
 ):
+   
     import pandas as _pd
     import numpy as _np
+    import math
     import plotly.graph_objects as go
 
     fig = go.Figure()
 
-    # --- normalize
+    # --- normalize inputs
     def f(x):
-        try: return float(x)
-        except Exception: return float("nan")
-    v, q25, q50, q75 = f(value), f(p25), f(p50), f(p75)
+        try:
+            return float(x)
+        except Exception:
+            return float("nan")
 
-    # --- domain (prefer [p25..p75])
+    v, q25, q50, q75 = f(value), f(p25), f(p50), f(p75)
     xs = [x for x in [q25, q50, q75, v] if _pd.notna(x) and math.isfinite(x)]
     if not xs:
-        xs = [0.0, 1.0]
-    if _pd.notna(q25) and _pd.notna(q75) and q75 >= q25:
-        base_min, base_max = q25, q75
-    else:
-        base_min, base_max = min(xs), max(xs)
+        xs = [0.0, 1.0]  # fallback
 
-    span = (base_max - base_min) if base_max != base_min else (abs(base_max) if base_max else 1.0)
-    pad = span * 0.25
-    x0, x1 = base_min - pad, base_max + pad
+    # --- choose domain so it always includes the company value and percentiles
+    # modes:
+    #  - "minmax": [min(all), max(all)]
+    #  - "whisker": use Tukey whiskers if IQR available; otherwise minmax
+    #  - "auto": start with minmax, then expand to whiskers if quartiles exist
+    def have_quartiles():
+        return _pd.notna(q25) and _pd.notna(q75) and (q75 >= q25)
+
+    min_x = min(xs)
+    max_x = max(xs)
+
+    if domain_mode == "minmax":
+        pass  # already min/max of available values
+    elif domain_mode == "whisker":
+        if have_quartiles():
+            iqr = q75 - q25
+            min_x = min(min_x, q25 - 1.5 * iqr)
+            max_x = max(max_x, q75 + 1.5 * iqr)
+    else:  # "auto" (default): minmax, expanded by whiskers if present
+        if have_quartiles():
+            iqr = q75 - q25
+            min_x = min(min_x, q25 - 1.5 * iqr)
+            max_x = max(max_x, q75 + 1.5 * iqr)
+
+    # guard against degenerate span
+    span = max(1e-12, (max_x - min_x))
+    pr = max(0.0, float(pad_ratio))
+    x0 = min_x - pr * span
+    x1 = max_x + pr * span
 
     # --- slim band geometry
     y_mid = 0.50
@@ -370,23 +397,26 @@ def _plot_benchmark(
 
     # --- background bands (drawn BELOW traces)
     lower_is_better = str(grade).lower().strip() == "lower"
+
     def rect(a, b, color):
         a, b = (a, b) if a <= b else (b, a)
         fig.add_shape(
             type="rect", x0=a, x1=b, y0=y0, y1=y1,
-            fillcolor=color, line_width=0, layer="below"   # <- keep below data
+            fillcolor=color, line_width=0, layer="below"
         )
 
+    # default positions if quartiles missing: split the domain roughly into thirds
     _q25 = q25 if _pd.notna(q25) else (x0 + (x1 - x0) * 0.33)
     _q75 = q75 if _pd.notna(q75) else (x0 + (x1 - x0) * 0.66)
+
     if lower_is_better:
-        rect(x0,  _q25, "#def7e5")
-        rect(_q25, _q75, "#fff3cd")
-        rect(_q75, x1,  "#fde2e4")
+        rect(x0, _q25, "#def7e5")   # healthy (lower)
+        rect(_q25, _q75, "#fff3cd") # satisfactory
+        rect(_q75, x1, "#fde2e4")   # needs improvement
     else:
-        rect(x0,  _q25, "#fde2e4")
-        rect(_q25, _q75, "#fff3cd")
-        rect(_q75, x1,  "#def7e5")
+        rect(x0, _q25, "#fde2e4")   # needs improvement
+        rect(_q25, _q75, "#fff3cd") # satisfactory
+        rect(_q75, x1, "#def7e5")   # healthy
 
     # --- quartile ticks (also BELOW traces)
     def tick(x, color, width):
@@ -394,56 +424,67 @@ def _plot_benchmark(
             fig.add_shape(
                 type="line", x0=x, x1=x, y0=y0, y1=y1,
                 line=dict(color=color, width=width),
-                layer="below"  # <- keep below data
+                layer="below"
             )
+
     tick(q25, "#9ca3af", qline_width)
     tick(q50, "#6b7280", qline_width)
     tick(q75, "#374151", qline_width)
 
-    # --- quartile labels (annotations are always above)
+    # --- quartile labels (annotations are above)
     label_y = y1 + 0.05
+
     def qlabel(x, txt, color):
         if _pd.notna(x):
             fig.add_annotation(
                 x=x, y=label_y, text=txt, xanchor="center", yanchor="bottom",
                 showarrow=False, font=dict(color=color, size=10)
             )
+
     qlabel(q25, "p25", "#9ca3af")
     qlabel(q50, "p50", "#6b7280")
     qlabel(q75, "p75", "#374151")
 
-    # --- company marker as a bold X (on TOP of shapes)
+    # --- company marker (on TOP of shapes)
     if _pd.notna(v):
         fig.add_trace(
             go.Scatter(
                 x=[v], y=[y_mid],
                 mode="markers",
-                # 'x' is a filled glyph; for a line-only X use 'x-thin' or 'x-open'
-                marker=dict(
-                    symbol="x",           # try 'x', 'x-thin', or 'x-open'
-                    size=cross_size,
-                    color="#1d4ed8",      # glyph color
-                ),
+                marker=dict(symbol="x", size=cross_size, color="#1d4ed8"),
                 name="Company",
                 hovertemplate=f"{company_name}<extra></extra>",
-                cliponaxis=False
+                cliponaxis=False  # keep marker visible at the edges
             )
         )
+
         # white pill label just below the band
+        # (clamp within axis so it never disappears)
+        def _clamp(val, lo, hi):
+            try:
+                return max(lo, min(hi, float(val)))
+            except Exception:
+                return (lo + hi) * 0.5
+
+        label_x = _clamp(v, x0, x1)
         fig.add_annotation(
-            x=v, y=y0 - 0.06,
+            x=label_x, y=y0 - 0.06,
             text=company_name or "Company",
             xanchor="center", yanchor="top",
             showarrow=False,
-            bgcolor=label_bgcolor,            # white
-            bordercolor=label_bordercolor,    # blue outline
+            bgcolor=label_bgcolor,
+            bordercolor=label_bordercolor,
             borderwidth=1,
             borderpad=6,
             font=dict(color=label_font_color, size=12)
         )
 
     # --- axes & layout
-    fig.update_xaxes(range=[x0, x1], showgrid=True, gridcolor="#e5e7eb", zeroline=False, tickmode="auto")
+    fig.update_xaxes(
+        range=[x0, x1],
+        showgrid=True, gridcolor="#e5e7eb",
+        zeroline=False, tickmode="auto"
+    )
     fig.update_yaxes(visible=False, range=[0, 1])
     fig.update_layout(
         height=110,
@@ -454,6 +495,7 @@ def _plot_benchmark(
         showlegend=False
     )
     return fig
+
 
 def _plot_yoy(industry_df: pd.DataFrame, company_df: pd.DataFrame, metric: str, grade: str) -> go.Figure:
     fig = go.Figure()
@@ -924,7 +966,7 @@ def main():
                         company_name=company,
                         band_thickness=0.16
                     )
-                    st.plotly_chart(fig, use_container_width=True, key=f"bm_{m_col}")
+                    st.plotly_chart(fig, width="stretch", key=f"bm_{m_col}")
 
                     _fmt = lambda x: "NA" if pd.isna(x) else f"{x:.4g}"
                     st.caption(f"Company={_fmt(val)} · p25={_fmt(p25)} · p50={_fmt(p50)} · p75={_fmt(p75)}")
@@ -1007,9 +1049,8 @@ def main():
     # TAB 3 — Suggested Audit Areas (Top 5)
     # -------------------------------------------------------------------------
     with tab_audit: 
-        st.subheader("Top 5 Suggested Audit Areas (Consolidated)")
+        st.subheader("Top 5 Suggested Audit Areas")
         subset_all = mtype_df.copy()
-        subset_all = subset_all.iloc[:39] if len(subset_all) > 39 else subset_all
 
         sel_mask = (
             (data_df["EXCHANGE"].astype(str) == exch)
@@ -1036,10 +1077,8 @@ def main():
                 p50 = pd.to_numeric(p_row[(c, "p50")], errors="coerce")
                 p75 = pd.to_numeric(p_row[(c, "p75")], errors="coerce")
   
+
             bucket = _classify_bucket(val, p25, p50, p75, g)
-            if bucket != "Needs Improvement":
-                continue 
-            
             assembled.append(
                 {
                     "Metrics_Name": n,
@@ -1055,43 +1094,22 @@ def main():
                     "p75_str": (f"{p75:.4g}" if pd.notna(p75) else "NA"),
                     "bucket": bucket,
                 }
-                
             )
+
 
         with st.expander("Generate with GPT‑5", expanded=True):
             model = st.text_input("Model (Audit)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
-
             generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
             if generate:
                 system_prompt, user_prompt = _build_audit_prompt(
-                    company, exch, ind, str(fy_sel), assembled, mtype_df
+                    company, exch, ind, str(fy_sel), assembled, mtype_df, max_types=5
                 )
                 api_key_for_call = _get_openai_api_key()
                 if not api_key_for_call:
                     st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
-                        text, err = _call_openai(
-                            system_prompt, user_prompt, model=model, max_tokens=600
-                        )
-
-                    if err:
-                        st.error(err)
-                    else:
-                        render = (text or "").strip()
-                        if not render:
-                            st.warning(
-                                "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
-                                "or lowering `max_tokens` to stay within the model’s context window."
-                            )
-                            with st.expander("Debug info"):
-                                st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-                        else:
-                            st.markdown("##### Suggested Auditable Areas")
-                            st.markdown(render)
-                            st.session_state["ai_audit_suggestions"] = text
-
-
+                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=300)
 
 # =============================================================================
 # Entrypoint
