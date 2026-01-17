@@ -334,10 +334,6 @@ def extract_text_from_upload(uploaded_file) -> tuple[str, dict]:
     return text, meta
 
 def build_relevant_excerpts(test_steps: str, docs: list[dict]) -> list[dict]:
-    """
-    For each file: chunk -> score vs test_steps -> keep top-K chunks.
-    Return list of {name, type, excerpt, score}.
-    """
     q = _norm(test_steps)
     all_excerpts = []
     for d in docs:
@@ -354,6 +350,28 @@ def build_relevant_excerpts(test_steps: str, docs: list[dict]) -> list[dict]:
     all_excerpts.sort(key=lambda x: x["score"], reverse=True)
     return all_excerpts[:MAX_TOTAL_EXCERPTS]
 
+def _parse_documents_required(cell_value: str) -> list[str]:
+    """
+    Turn the 'Documents required' cell (Excel column F) into clean labels.
+    Supports bullets, dashes, semicolons, and numbered lists.
+    """
+    raw = str(cell_value or "")
+    # Normalize common bullets/delimiters to newline
+    raw = raw.replace("•", "\n").replace("‣", "\n").replace("◦", "\n")
+    # Split on newlines and semicolons as fallback
+    parts = []
+    for line in re.split(r"[\n;]+", raw):
+        # Trim typical bullets/numbers like '-', '–', '—', '*', '1.', 'a)', etc.
+        line = re.sub(r"^\s*[-–—*•\d\.\)]\s*", "", str(line)).strip()
+        if line:
+            parts.append(line)
+    # Deduplicate while preserving order
+    seen, out = set(), []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 # =============================================================================
 # Matching & autopopulate helpers 
@@ -903,31 +921,6 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
         for r in chosen]
     metrics_summary = "\n".join(lines)
 
-    schema = {
-        "work_program": {
-            "company": company,
-            "exchange": exchange,
-            "industry": industry,
-            "fy": f"{fy}",
-            "top_areas": [
-                {
-                    "scope_name": "free-text scope name (e.g., Inventory Costing)",
-                    "scope_keywords": ["tokens to help mapping, e.g., inventory, cost, standard"],
-                    "sub_process_name": "free-text sub-process (e.g., Standard cost updates & revaluations)",
-                    "sub_process_keywords": ["e.g., revaluation, standard cost, delta, effective date"],
-                    "risk": "plain language risk rationale",
-                    "control_description": "plain language control description",
-                    "procedures": [
-                        "succinct, step-by-step audit procedures"
-                    ],
-                    "data_required": [
-                        "specific documents and data fields to upload"
-                    ]
-                }
-            ]
-        }
-    }
-
     user = (
             f"Company: {company}\n"
             f"Industry: {industry}\n"
@@ -942,6 +935,65 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
             "State assumptions if data is missing."
         )
     return system, user
+
+
+def _convert_suggestions_to_json(readable_text: str, model: str = None) -> dict:
+    api_key = _get_openai_api_key()
+    if not api_key or not readable_text:
+        return {}
+
+    system_prompt = (
+        "You are a meticulous converter. Convert the given auditor-readable notes into a JSON object that strictly "
+        "follows the 'work_program' schema described below. Do not add fields. Do not include Markdown or prose. "
+        "Only output JSON."
+    )
+    # Give the schema again for reliability (same keys as your mapper expects)
+    schema_hint = (
+        "Schema:\n"
+        "{\n"
+        '  "work_program": {\n'
+        '    "company": "string", "exchange": "string", "industry": "string", "fy": "string",\n'
+        '    "top_areas": [\n'
+        '      {\n'
+        '        "scope_name": "string",\n'
+        '        "scope_keywords": ["string"],\n'
+        '        "sub_process_name": "string",\n'
+        '        "sub_process_keywords": ["string"],\n'
+        '        "risk": "string",\n'
+        '        "control_description": "string",\n'
+        '        "procedures": ["string"],\n'
+        '        "data_required": ["string"]\n'
+        '      }\n'
+        '    ]\n'
+        "  }\n"
+        "}"
+    )
+    user_prompt = (
+        f"{schema_hint}\n\n"
+        "Convert the following content into the schema. Use best-effort extraction for the three priority areas. "
+        "Return ONLY JSON, no backticks:\n\n"
+        f"=== INPUT START ===\n{readable_text}\n=== INPUT END ==="
+    )
+
+    text, err = _call_openai(
+        system_prompt, user_prompt,
+        api_key=api_key,
+        model=(model or os.environ.get("OPENAI_MODEL", "gpt-5")),
+        max_tokens=900
+    )
+    if err or not text:
+        return {}
+
+    try:
+        payload = text.strip()
+        # Strip any accidental fences or pre/post text
+        if payload.startswith("```"):
+            payload = payload.strip("`")
+            payload = payload[payload.find("{"): payload.rfind("}") + 1]
+        return json.loads(payload)
+    except Exception:
+        return {}
+
 
 # =============================================================================
 # Utility (numeric validation)
@@ -1229,7 +1281,7 @@ def main():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.0 | 2026")
+    st.sidebar.caption("version 3.2 | 2026")
 
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
@@ -1480,94 +1532,153 @@ def main():
             if not all_metrics_to_rank:
                 st.warning("No problematic metrics found to analyze.")
             else:
-                # This uses the helpers we discussed to pick the 5 best examples
                 system_prompt, user_prompt = _build_audit_prompt(
-                    company, exch, ind, str(fy_sel), 
+                    company, exch, ind, str(fy_sel),
                     all_metrics_to_rank, mtype_df, max_types=3
                 )
-                
                 api_key_for_call = _get_openai_api_key()
                 if not api_key_for_call:
                     st.error("OpenAI API key is missing.")
                 else:
                     with st.spinner("Calling OpenAI and analyzing risk areas..."):
-                        text, err = _call_openai(system_prompt, user_prompt, api_key= api_key_for_call, model=model, max_tokens=800)
+                        text, err = _call_openai(
+                            system_prompt, user_prompt,
+                            api_key=api_key_for_call, model=model, max_tokens=800
+                        )
 
                     if err:
                         st.error(f"API Error: {err}")
                     elif text:
+                        # 1) Show readable results on-page
                         st.success("Audit suggestions generated!")
                         st.markdown(text)
-                        st.session_state["ai_audit_suggestions"] = text
-                            
+                        st.session_state["ai_audit_suggestions"] = text  
+
+                        # 2) Convert to JSON silently and store for Tab 4
+                        with st.spinner("Structuring suggestions for Tab 4..."):
+                            ai_json = _convert_suggestions_to_json(text, model=model)
+
+                        if ai_json and isinstance(ai_json, dict) and ai_json.get("work_program", {}).get("top_areas"):
+                            st.session_state["ai_work_program"] = ai_json   
+                            # If we had old mappings from a previous run, reset so Tab 4 remaps:
+                            st.session_state.pop("ai_mappings", None)
+                            st.caption("Structured JSON saved for Tab 4 filtering (not displayed).")
+                        else:
+                            st.warning(
+                                "Could not derive a structured work program from the readable output. "
+                                "Tab 4 will not be filtered until a structured result is available."
+                            )
                     else:
                         st.warning(
                             "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
                             "or lowering `max_tokens` to stay within the model’s context window."
                         )
-                        with st.expander("Debug info"):
-                            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+
+        with st.expander("Debug info"):
+            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+
 
     # -------------------------------------------------------------------------
     # TAB 4 — Audit Work Program
     # -------------------------------------------------------------------------
+
     with tab_wp:
         st.subheader("Audit Work Program — AI-Assisted Audit Testing")
+        # ---- Gate: only proceed if Tab 3 suggestions exist ----
+        if "ai_work_program" not in st.session_state:
+            st.info("Generate suggested audit areas in Tab 3 to view related audit work program.")
+            st.stop()
 
+        # Load master and synonyms
         audit_df = load_audit_db()
+        synonyms_map = load_synonyms_map()
         scopes, subs_by_scope = audit_vocab(audit_df)
 
-        # ---- Defaults from any AI mapping (or from raw AI suggestions), else fallback ----
-        def _defaults_from_session():
-            # Prefer precise mapping outcome if present
-            maps = st.session_state.get("ai_mappings")
-            if maps and isinstance(maps, list) and len(maps) > 0:
-                m0 = maps[0]
-                s0 = m0.get("mapped_scope")
-                sp0 = m0.get("mapped_sub_process")
-                if s0 in scopes and sp0 in subs_by_scope.get(s0, []):
+        # ---- Build or reuse AI -> master mappings (restrict to just 3 suggested areas) ----
+        ai_json = st.session_state.get("ai_work_program", {})
+        mappings = st.session_state.get("ai_mappings")
+        if not mappings:
+            # Map AI free-text to the master scope/sub-process
+            mappings = map_ai_to_master(ai_json, audit_df, auto_threshold=0.82, review_threshold=0.60,
+                                        synonyms_map=synonyms_map)
+            st.session_state["ai_mappings"] = mappings
+
+        # Keep only successfully matched areas (auto or review)
+        matched = [m for m in (mappings or []) if m.get("status") in ("auto", "review")]
+        if not matched:
+            st.warning("Suggestions are generated, but could not be mapped to the audit master. "
+                    "Please refine Tab 3 output or add synonyms in the 'Synonyms' sheet.")
+            # Allow full selection as fallback
+            filtered_scopes = scopes
+            filtered_subs_by_scope = subs_by_scope
+        else:
+            # Build filtered vocab from the 3 suggested areas
+            pairs = {(m["mapped_scope"], m["mapped_sub_process"]) for m in matched
+                    if m.get("mapped_scope") and m.get("mapped_sub_process")}
+            filtered_scopes = sorted({s for s, _ in pairs})
+            filtered_subs_by_scope = {s: sorted({sp for (ss, sp) in pairs if ss == s})
+                                    for s in filtered_scopes}
+
+        # ---- Defaults prefer first matched pair ----
+        def _pick_defaults():
+            if matched:
+                s0 = matched[0].get("mapped_scope")
+                sp0 = matched[0].get("mapped_sub_process")
+                if s0 in filtered_scopes and sp0 in filtered_subs_by_scope.get(s0, []):
                     return s0, sp0
-            # Fallback to AI work_program (free text) best-effort exact match
-            ai = st.session_state.get("ai_work_program", {})
-            areas = (ai or {}).get("work_program", {}).get("top_areas", [])
-            if areas:
-                s1 = str(areas[0].get("scope_name", "")).strip()
-                sp1 = str(areas[0].get("sub_process_name", "")).strip()
-                if s1 in scopes and sp1 in subs_by_scope.get(s1, []):
-                    return s1, sp1
-            # Final fallback: first scope/sub
-            s = scopes[0] if scopes else ""
-            sp = subs_by_scope.get(s, [""])[0] if s else ""
+            # Fallback to the first available in the filtered (or full) list
+            s = (filtered_scopes[0] if filtered_scopes else (scopes[0] if scopes else ""))
+            sp_list = (filtered_subs_by_scope.get(s) if s in filtered_scopes else subs_by_scope.get(s, [])) if s else []
+            sp = (sp_list[0] if sp_list else "")
             return s, sp
 
-        d_scope, d_sub = _defaults_from_session()
+        d_scope, d_sub = _pick_defaults()
 
-        sel_scope = st.selectbox("1) Scope", scopes, index=(scopes.index(d_scope) if d_scope in scopes else 0), key="wp_scope")
-        sel_sub = st.selectbox(
-            "2) Sub-process",
-            subs_by_scope.get(sel_scope, []),
-            index=(subs_by_scope[sel_scope].index(d_sub) if sel_scope in subs_by_scope and d_sub in subs_by_scope[sel_scope] else 0),
-            key="wp_subproc"
-        )
+        # ---- Render the filtered selects ----
+        if not filtered_scopes:
+            st.info("No mappable areas were found. Use the full catalog below.")
+            sel_scope = st.selectbox("1) Scope", scopes, index=(scopes.index(d_scope) if d_scope in scopes else 0),
+                                    key="wp_scope")
+            sel_sub = st.selectbox(
+                "2) Sub-process",
+                subs_by_scope.get(sel_scope, []),
+                index=(subs_by_scope[sel_scope].index(d_sub)
+                    if sel_scope in subs_by_scope and d_sub in subs_by_scope[sel_scope] else 0),
+                key="wp_subproc"
+            )
+        else:
+            sel_scope = st.selectbox("1) Scope", filtered_scopes,
+                                    index=(filtered_scopes.index(d_scope) if d_scope in filtered_scopes else 0),
+                                    key="wp_scope")
+            sel_sub = st.selectbox(
+                "2) Sub-process",
+                filtered_subs_by_scope.get(sel_scope, []),
+                index=(filtered_subs_by_scope[sel_scope].index(d_sub)
+                    if sel_scope in filtered_subs_by_scope and d_sub in filtered_subs_by_scope[sel_scope] else 0),
+                key="wp_subproc"
+            )
 
-        # ---- Retrieve matched row from master and show Risk/Control ----
+        # ---- Retrieve row and show Risk/Control (unchanged) ----
         row = audit_df[(audit_df["Scope"] == sel_scope) & (audit_df["Sub-process"] == sel_sub)]
         if row.empty:
             st.error("No work program row found for this selection.")
             st.stop()
-        rec = row.iloc[0]
 
+        rec = row.iloc[0]
         st.markdown("**Risk**")
         st.info(rec["Risk"])
         st.markdown("**Control Description**")
         st.info(rec["Control Description"])
 
-        # ---- Build uploaders from Documents required ----
+        # ---- Documents required (column F) -> uploaders (use robust parser) ----
         st.markdown("**Documents required**")
-        doc_items = [d.strip("-• ").strip() for d in str(rec["Documents required"]).splitlines() if str(d).strip()]
+        doc_items = _parse_documents_required(rec["Documents required"])
         uploaded = {}
         for i, lab in enumerate(doc_items):
-            uploaded[lab] = st.file_uploader(f"Upload: {lab}", type=None, accept_multiple_files=False, key=f"doc_{sel_scope}_{sel_sub}_{i}")
+            uploaded[lab] = st.file_uploader(
+                f"Upload: {lab}", type=None, accept_multiple_files=False,
+                key=f"doc_{sel_scope}_{sel_sub}_{i}"
+            )
 
         st.markdown("---")
 
