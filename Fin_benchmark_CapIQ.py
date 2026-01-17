@@ -425,7 +425,6 @@ def _first_present_column(df: pd.DataFrame, aliases: List[str]) -> str:
     return ""
 
 
-
 def read_key_financials_for(df_company: pd.DataFrame, prefer_fy: str) -> Dict[str, float]:
     if df_company.empty:
         return {}
@@ -496,6 +495,11 @@ def _try_get_percentile_row(pct_wide: pd.DataFrame, exch: str, ind: str, fy: str
     except Exception:
         return None
 
+
+# Clear Tab 1 analysis artifacts
+def _clear_tab1_analysis():
+    st.session_state.pop("fin_analysis_text", None)
+    st.session_state.pop("fin_analysis_pdf_bytes", None)
 
 # =============================================================================
 # Visuals
@@ -1380,16 +1384,18 @@ def main():
         )
 
         type_list = list(mtype_df["Type"].dropna().astype(str).unique())
-        # remember last choice just for this tab
-        default_idx = 0 if st.session_state.get("mtype_bm") is None else type_list.index(st.session_state["mtype_bm"])
-        mtype = st.selectbox("Select a metrics type", type_list, index=default_idx, key="mtype_bm")
+        # Safer default index handling (avoids ValueError if session value not in list)
+        if st.session_state.get("mtype_bm") in type_list:
+            default_idx = type_list.index(st.session_state["mtype_bm"])
+        else:
+            default_idx = 0
+
+        mtype = st.selectbox("Select a metrics type", type_list, index=default_idx, key="mtype_bm", on_change=_clear_tab1_analysis)
         subset = mtype_df[mtype_df["Type"] == mtype].copy()
         st.caption(f"Showing metrics for type: **{mtype}** ({len(subset)} metrics)")
 
         comp_slice = slice_company_row_for_fy(data_df, exch, ind, fy_sel, company)
         p_row = _try_get_percentile_row(pct_wide, exch, ind, fy_sel)
-
-
 
         grid = st.columns(2)
         assembled_for_llm = []
@@ -1410,14 +1416,14 @@ def main():
 
             # Skip if nothing to show
             if (pd.isna(val)) and pd.isna(p25) and pd.isna(p50) and pd.isna(p75):
+                # skipped_bm.append(m_name)  # uncomment if you want to track skipped
                 continue
 
             bucket = _classify_bucket(val, p25, p50, p75, m_grade)
 
             with grid[i % 2]:
-                # put the entire card into one container so layout stays together
                 with st.container():
-                    st.markdown(f"**{m_name}**")  # removed column code
+                    st.markdown(f"**{m_name}**")
                     st.markdown(f'<span class="chip {_chip_class(bucket)}">{bucket}</span>', unsafe_allow_html=True)
                     st.caption(m_desc)
 
@@ -1426,12 +1432,12 @@ def main():
                         company_name=company,
                         band_thickness=0.16
                     )
-                    st.plotly_chart(fig, width="stretch", key=f"bm_{m_col}")
+                    st.plotly_chart(fig, use_container_width=True, key=f"bm_{m_col}")
 
                     _fmt = lambda x: "NA" if pd.isna(x) else f"{x:.4g}"
                     st.caption(f"Company={_fmt(val)} · p25={_fmt(p25)} · p50={_fmt(p50)} · p75={_fmt(p75)}")
 
-            # (keep your LLM assembly if you need it)
+            # keep your LLM assembly
             assembled_for_llm.append({
                 "Metrics_Name": m_name, "Metrics_Col": m_col, "Metrics_Grade": m_grade,
                 "value": None if pd.isna(val) else float(val), "value_str": ("NA" if pd.isna(val) else f"{val:.4g}"),
@@ -1443,59 +1449,58 @@ def main():
                 "bucket": bucket,
             })
 
-            if skipped_bm:
-                with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
-                    st.write(", ".join(skipped_bm))
+        # ----- move these OUTSIDE the loop -----
 
-            # Generate Analysis section
-            st.divider()
-            st.subheader("Financial Metrics - Analysis")
+        if skipped_bm:
+            with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
+                st.write(", ".join(skipped_bm))
 
-            # Reuse model selection pattern from Tab 3 for consistency
-            fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
+        st.divider()
+        st.subheader("Financial Metrics - Analysis")
 
-            # Currency by exchange already computed as `ccy` in the sidebar; reuse it here if in scope
-            currency_label = ccy if 'ccy' in locals() else ""
+        # Either reuse Tab 3's model via session, or keep a unique input here:
+        # Option 1 (reuse): fin_model = st.session_state.get("audit_model", os.environ.get("OPENAI_MODEL", "gpt-5"))
+        fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
 
-            btn_fin = st.button(
-                "Generate Analysis",
-                type="primary",
-                key="btn_fin_analysis",
-                disabled=(len(assembled_for_llm) == 0)
-            )
+        currency_label = ccy if 'ccy' in locals() else ""
 
-            if btn_fin:
-                api_key_fin = _get_openai_api_key()
-                if not api_key_fin:
-                    st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
-                else:
-                    # Build prompt from whatever metrics are shown under the selected Type
-                    sys_p, usr_p = _build_fin_analysis_prompt(
-                        company=company, exchange=exch, industry=ind, fy=str(fy_sel),
-                        metrics_rows=assembled_for_llm, currency=currency_label
+        btn_fin = st.button(
+            "Generate Analysis",
+            type="primary",
+            key="btn_fin_analysis",
+            disabled=(len(assembled_for_llm) == 0)
+        )
+
+        if btn_fin:
+            api_key_fin = _get_openai_api_key()
+            if not api_key_fin:
+                st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+            else:
+                sys_p, usr_p = _build_fin_analysis_prompt(
+                    company=company, exchange=exch, industry=ind, fy=str(fy_sel),
+                    metrics_rows=assembled_for_llm, currency=currency_label
+                )
+                with st.spinner("Calling model and drafting financial analysis..."):
+                    fin_text, fin_err = _call_openai(
+                        sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=800
                     )
-                    with st.spinner("Calling model and drafting financial analysis..."):
-                        fin_text, fin_err = _call_openai(
-                            sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=800
-                        )
-                    if fin_err:
-                        st.error(f"API Error: {fin_err}")
-                    elif fin_text:
-                        st.session_state["fin_analysis_text"] = fin_text.strip()
-                        st.success("Financial analysis generated.")
-                    else:
-                        st.warning("No output received from the model. Try a smaller prompt or different model.")
+                if fin_err:
+                    st.error(f"API Error: {fin_err}")
+                elif fin_text:
+                    st.session_state["fin_analysis_text"] = fin_text.strip()
+                    st.success("Financial analysis generated.")
+                else:
+                    st.warning("No output received from the model. Try a smaller prompt or different model.")
 
-            # Show (and allow download of) the latest analysis, if any
-            if st.session_state.get("fin_analysis_text"):
-                st.markdown(st.session_state["fin_analysis_text"])
-                st.download_button(
-                    "Download analysis (.md)",
-                    data=st.session_state["fin_analysis_text"].encode("utf-8"),
-                    file_name="financial_analysis.md",
-                    mime="text/markdown",
-                    key="dl_fin_analysis_md"
-    )
+        if st.session_state.get("fin_analysis_text"):
+            st.markdown(st.session_state["fin_analysis_text"])
+            st.download_button(
+                "Download analysis (.md)",
+                data=st.session_state["fin_analysis_text"].encode("utf-8"),
+                file_name="financial_analysis.md",
+                mime="text/markdown",
+                key="dl_fin_analysis_md"
+            )
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
