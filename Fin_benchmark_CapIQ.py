@@ -13,7 +13,6 @@ import streamlit as st
 import json
 import io
 import re
-import shutil
 from io import BytesIO
 from difflib import SequenceMatcher
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
@@ -23,6 +22,8 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Image as RLImage, PageBreak  
 from reportlab.lib.utils import ImageReader
 import plotly.io as pio
+from playwright.sync_api import sync_playwright
+import base64
 
 # =============================================================================
 # Self-launching Streamlit bootstrap
@@ -625,6 +626,32 @@ def analysis_and_charts_to_html_bytes(
 
     parts.append("</body></html>")
     return "\n".join(parts).encode("utf-8")
+
+def html_bytes_to_pdf_bytes(html_bytes: bytes) -> bytes:
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx = browser.new_context()
+        page = ctx.new_page()
+
+        # Load the HTML via a data URL (no temp files)
+        data_url = "data:text/html;base64," + base64.b64encode(html_bytes).decode("ascii")
+        page.goto(data_url, wait_until="load")
+
+        # Print to PDF; enable backgrounds and honor CSS @page
+        pdf_bytes = page.pdf(
+            format="A4",
+            print_background=True,
+            # Optional: margins / header / footer
+            # displayHeaderFooter=True,
+            # headerTemplate="<div style='font-size:10px;width:100%;text-align:center;'>"
+            #                 f"{company} — {exch} · {ind}</div>",
+            # footerTemplate="<div style='font-size:10px;width:100%;text-align:center;'>"
+            #                 "Page <span class='pageNumber'></span> of <span class='totalPages'></span></div>",
+            # margin={"top": "60px", "bottom": "60px", "left": "14mm", "right": "14mm"},
+        )
+        browser.close()
+        return pdf_bytes
 
 # =============================================================================
 # Visuals
@@ -1718,6 +1745,26 @@ def main():
                     mime="text/html",
                     use_container_width=True,
                     key="dl_fin_plus_charts_html",
+                )
+
+        # Download: PDF rendered by Chromium (no Kaleido)
+        if "bm_fin_combo_html_bytes" in ss:
+            # Cache generated PDF per selection combo if desired
+            if "bm_fin_combo_pdf_bytes_via_playwright" not in ss:
+                try:
+                    ss["bm_fin_combo_pdf_bytes_via_playwright"] = html_bytes_to_pdf_bytes(ss["bm_fin_combo_html_bytes"])
+                except Exception as e:
+                    st.error(f"PDF export error (Playwright): {e}")
+                    ss.pop("bm_fin_combo_pdf_bytes_via_playwright", None)
+
+            if "bm_fin_combo_pdf_bytes_via_playwright" in ss:
+                st.download_button(
+                    "Download analysis + charts (.pdf)",
+                    data=ss["bm_fin_combo_pdf_bytes_via_playwright"],
+                    file_name="analysis_and_benchmarking.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="dl_fin_plus_charts_pdf_playwright",
                 )
 
     # -------------------------------------------------------------------------
