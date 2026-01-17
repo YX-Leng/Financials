@@ -540,84 +540,115 @@ def _get_openai_api_key():
 
     return None
 
-def _call_openai(system_prompt: str,
-                 user_prompt: str,
-                 model: str = None,
-                 max_tokens: int = 600,
-                 max_output_tokens: int | None = None,
-                 prefer: str = "auto") -> tuple[str, str | None]:
-
-    key = _get_openai_api_key()
-    if not key:
-        return "", "OpenAI API key is missing. Please set it in your environment or Streamlit secrets."
-
-    # Decide a single token budget we can reuse for both APIs
-    token_budget = max_tokens if max_tokens is not None else 600
-    if max_output_tokens is None:
-        max_output_tokens = token_budget
-
+def _extract_text_any(out_obj):
     try:
-        from openai import OpenAI
-    except Exception as e:
-        return "", f"Failed to import OpenAI SDK: {e}"
+        # Newer Responses API convenience field
+        txt = getattr(out_obj, "output_text", None)
+        if txt and str(txt).strip():
+            return str(txt).strip()
+    except Exception:
+        pass
 
+    # Try common shapes
     try:
-        client = OpenAI(api_key=key)
-        mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
-    except Exception as e:
-        return "", f"Failed to initialize OpenAI client: {e}"
+        # Chat Completions shape
+        if hasattr(out_obj, "choices") and out_obj.choices:
+            # 1) Standard chat
+            msg = getattr(out_obj.choices[0], "message", None)
+            if msg and getattr(msg, "content", None):
+                return str(msg.content).strip()
+            # 2) Responses-like content parts under choices
+            content = getattr(out_obj.choices[0], "content", None)
+            if isinstance(content, list) and content:
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                        if part.get("text"):
+                            return str(part["text"]).strip()
+    except Exception:
+        pass
 
-    errors: list[str] = []
+    # Responses API "output" list shape (content parts)
+    try:
+        output = getattr(out_obj, "output", None)
+        if isinstance(output, list):
+            for item in output:
+                content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+                if isinstance(content, list):
+                    for part in content:
+                        # part may be dict or object with attributes
+                        if isinstance(part, dict):
+                            if part.get("type") in ("output_text", "text") and part.get("text"):
+                                return str(part["text"]).strip()
+                        else:
+                            if getattr(part, "type", None) in ("output_text", "text") and getattr(part, "text", None):
+                                return str(getattr(part, "text")).strip()
+    except Exception:
+        pass
 
-    # --- 1) Try Chat Completions (if allowed by 'prefer')
-    if prefer in ("auto", "chat"):
+    # Final fallback: stringify object (for debugging)
+    try:
+        return str(out_obj).strip()
+    except Exception:
+        return ""
+
+def _call_openai(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
+        if not api_key:
+            return None, "OpenAI API key is not set."
+
         try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
+
+            # --- Try Responses API first ---
+            try:
+                out = client.responses.create(
+                    model=mdl,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    # Correct for Responses API:
+                    response_format={"type": "text"},         # force text section
+                    reasoning={"effort": "low"},              # reduce thought token usage
+                    max_output_tokens=max_tokens,
+                )
+                txt = _extract_text_any(out)
+                if txt:
+                    return txt, None
+            except TypeError:
+                # Retry without max_output_tokens if SDK build rejects it
+                try:
+                    out = client.responses.create(
+                        model=mdl,
+                        input=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_prompt},
+                        ],
+                    )
+                    txt = _extract_text_any(out)
+                    if txt:
+                        return txt, None
+                except Exception:
+                    pass
+            except Exception:
+                pass  # fall through to Chat Completions
+
+            # --- Fallback: Chat Completions ---
             resp = client.chat.completions.create(
                 model=mdl,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": user_prompt},
                 ],
-                max_tokens=token_budget,   # chat API expects 'max_tokens'
+                # Correct for Chat Completions:
+                max_tokens=max_tokens,
             )
-            text = (resp.choices[0].message.content or "").strip()
-            return text, None
+            txt2 = _extract_text_any(resp)
+            return (txt2 if txt2 else None), None
+
         except Exception as e:
-            errors.append(f"chat.completions failed: {e}")
-            if prefer == "chat":
-                return "", "OpenAI chat.completions error: " + str(e)
-
-    # --- 2) Fall back to Responses API (if allowed)
-    if prefer in ("auto", "responses"):
-        try:
-            # Responses API expects 'max_output_tokens'
-            resp = client.responses.create(
-                model=mdl,
-                input=f"[SYSTEM]\n{system_prompt}\n\n[USER]\n{user_prompt}",
-                max_output_tokens=max_tokens,
-            )
-
-            # Prefer the convenience accessor if present
-            text = getattr(resp, "output_text", None)
-            if not text:
-                # Fallback extraction for SDKs that structure output differently
-                text_parts = []
-                try:
-                    for item in getattr(resp, "output", []) or []:
-                        for c in getattr(item, "content", []) or []:
-                            if getattr(c, "type", "") == "output_text":
-                                text_parts.append(getattr(c, "text", ""))
-                except Exception:
-                    pass
-                text = "".join(text_parts)
-            return (text or "").strip(), None
-        except Exception as e:
-            errors.append(f"responses.create failed: {e}")
-            if prefer == "responses":
-                return "", "OpenAI responses API error: " + str(e)
-
-    # If both attempts failed
-    return "", "OpenAI call failed: " + " | ".join(errors) if errors else "OpenAI call failed for unknown reasons."
+            return None, f"OpenAI call failed: {e}"
 
 
 # --- Select the worst-performing indicator per metric type ---
