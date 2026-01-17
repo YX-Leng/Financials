@@ -1075,31 +1075,43 @@ def main():
             g = str(r["Metrics_Grade"]).strip()
 
             val = pd.to_numeric(comp_row.iloc[0].get(c, np.nan), errors="coerce") if not comp_row.empty else np.nan
+            
+            # Skip metrics where the selected company has no data
+            if pd.isna(val):
+                continue
+
             p25 = p50 = p75 = np.nan
             if p_row is not None and (c, "p25") in p_row.index:
                 p25 = pd.to_numeric(p_row[(c, "p25")], errors="coerce")
                 p50 = pd.to_numeric(p_row[(c, "p50")], errors="coerce")
                 p75 = pd.to_numeric(p_row[(c, "p75")], errors="coerce")
-  
 
             bucket = _classify_bucket(val, p25, p50, p75, g)
-            assembled.append(
-                {
-                    "Metrics_Name": n,
-                    "Metrics_Col": c,
-                    "Metrics_Grade": g,
-                    "value": float(val) if pd.notna(val) else None,
-                    "value_str": (f"{val:.4g}" if pd.notna(val) else "NA"),
-                    "p25": float(p25) if pd.notna(p25) else None,
-                    "p50": float(p50) if pd.notna(p50) else None,
-                    "p75": float(p75) if pd.notna(p75) else None,
-                    "p25_str": (f"{p25:.4g}" if pd.notna(p25) else "NA"),
-                    "p50_str": (f"{p50:.4g}" if pd.notna(p50) else "NA"),
-                    "p75_str": (f"{p75:.4g}" if pd.notna(p75) else "NA"),
-                    "bucket": bucket,
-                }
-            )
 
+            # --- FIX A: FILTER AND LIMIT ---
+            # Only add to the prompt if the metric needs attention
+            if bucket in ["Needs Improvement", "Satisfactory"]:
+                assembled.append(
+                    {
+                        "Metrics_Name": n,
+                        "Metrics_Col": c,
+                        "Metrics_Grade": g,
+                        "value": float(val) if pd.notna(val) else None,
+                        "value_str": (f"{val:.4g}" if pd.notna(val) else "NA"),
+                        "p25": float(p25) if pd.notna(p25) else None,
+                        "p50": float(p50) if pd.notna(p50) else None,
+                        "p75": float(p75) if pd.notna(p75) else None,
+                        "p25_str": (f"{p25:.4g}" if pd.notna(p25) else "NA"),
+                        "p50_str": (f"{p50:.4g}" if pd.notna(p50) else "NA"),
+                        "p75_str": (f"{p75:.4g}" if pd.notna(p75) else "NA"),
+                        "bucket": bucket,
+                    }
+                )
+            
+            # Stop adding metrics once we hit 10 to keep the prompt length safe
+            if len(assembled) >= 10:
+                break
+            
         model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
         generate = st.button("Generate Audit Suggestions", type="primary")
         if generate:
