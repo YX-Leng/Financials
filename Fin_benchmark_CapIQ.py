@@ -1100,7 +1100,7 @@ def main():
                 }
             )
 
-            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="tab3_audit_model")
             generate = st.button("Generate Audit Suggestions", type="primary")
             if generate:
                 system_prompt, user_prompt = _build_audit_prompt(
