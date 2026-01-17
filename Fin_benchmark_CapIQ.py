@@ -1111,6 +1111,22 @@ def main():
                     with st.spinner("Calling OpenAI and generating suggestions..."):
                         text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
 
+                if err:
+                    st.error(err)
+                else:
+                    render = (text or "").strip()
+                    if not render:
+                        st.warning(
+                            "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                            "or lowering `max_tokens` to stay within the model’s context window."
+                        )
+                        with st.expander("Debug info"):
+                            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+                    else:
+                        st.markdown("##### Suggested Auditable Areas")
+                        st.markdown(render)
+                        st.session_state["ai_audit_suggestions"] = text
+
 # =============================================================================
 # Entrypoint
 # =============================================================================
