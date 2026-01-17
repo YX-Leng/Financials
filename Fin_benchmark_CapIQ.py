@@ -1158,7 +1158,7 @@ def main():
                     st.error("OpenAI API key is missing.")
                 else:
                     with st.spinner("Analyzing risk areas..."):
-                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
+                        text, err = _call_openai(system_prompt, user_prompt, api_key= api_key_for_call, model=model, max_tokens=600)
 
                     if err:
                         st.error(f"API Error: {err}")
