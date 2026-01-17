@@ -903,6 +903,10 @@ def main():
 
     st.markdown(f"**Company:** {company} &nbsp;&nbsp; **Exchange:** {exch} &nbsp;&nbsp; "
                 f"**Industry:** {ind} &nbsp;&nbsp; **FY:** {fy_sel}")
+    
+    # --- Footer ---
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+    st.sidebar.caption("version 3.0 | 2026")
 
     tab_bm, tab_yoy, tab_audit = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Audit Areas"])
 
@@ -1096,7 +1100,7 @@ def main():
                 }
             )
 
-            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"))
+            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
             generate = st.button("Generate Audit Suggestions", type="primary")
             if generate:
                 system_prompt, user_prompt = _build_audit_prompt(
@@ -1124,10 +1128,6 @@ def main():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(render)
                         st.session_state["ai_audit_suggestions"] = text
-
-    # --- Footer ---
-    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.0 | 2026")
 
 # =============================================================================
 # Entrypoint
