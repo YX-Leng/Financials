@@ -1100,34 +1100,34 @@ def main():
                 }
             )
 
-            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="tab3_audit_model")
-            generate = st.button("Generate Audit Suggestions", type="primary")
-            if generate:
-                system_prompt, user_prompt = _build_audit_prompt(
-                    company, exch, ind, str(fy_sel), assembled, mtype_df, max_types=5
-                )
-                api_key_for_call = _get_openai_api_key()
-                if not api_key_for_call:
-                    st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
-                else:
-                    with st.spinner("Calling OpenAI and generating suggestions..."):
-                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
+        model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+        generate = st.button("Generate Audit Suggestions", type="primary")
+        if generate:
+            system_prompt, user_prompt = _build_audit_prompt(
+                company, exch, ind, str(fy_sel), assembled, mtype_df, max_types=5
+            )
+            api_key_for_call = _get_openai_api_key()
+            if not api_key_for_call:
+                st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
+            else:
+                with st.spinner("Calling OpenAI and generating suggestions..."):
+                    text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
 
-                if err:
-                    st.error(err)
+            if err:
+                st.error(err)
+            else:
+                render = (text or "").strip()
+                if not render:
+                    st.warning(
+                        "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                        "or lowering `max_tokens` to stay within the model’s context window."
+                    )
+                    with st.expander("Debug info"):
+                        st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
                 else:
-                    render = (text or "").strip()
-                    if not render:
-                        st.warning(
-                            "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
-                            "or lowering `max_tokens` to stay within the model’s context window."
-                        )
-                        with st.expander("Debug info"):
-                            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-                    else:
-                        st.markdown("##### Suggested Auditable Areas")
-                        st.markdown(render)
-                        st.session_state["ai_audit_suggestions"] = text
+                    st.markdown("##### Suggested Auditable Areas")
+                    st.markdown(render)
+                    st.session_state["ai_audit_suggestions"] = text
 
 # =============================================================================
 # Entrypoint
