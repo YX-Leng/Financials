@@ -907,7 +907,7 @@ def _extract_text_any(out_obj):
     except Exception:
         return ""
 
-def _call_openai(system_prompt, user_prompt, api_key, model=None, max_tokens=800):
+def _call_openai(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
         if not api_key:
             return None, "OpenAI API key is not set."
 
@@ -1141,7 +1141,7 @@ def _convert_suggestions_to_json(readable_text: str, model: str = None) -> dict:
         system_prompt, user_prompt,
         api_key=api_key,
         model=(model or os.environ.get("OPENAI_MODEL", "gpt-5")),
-        max_tokens=900
+        max_tokens=600
     )
     if err or not text:
         return {}
@@ -1673,7 +1673,7 @@ def main():
                 )
                 with st.spinner("Calling model and drafting financial analysis..."):
                     fin_text, fin_err = _call_openai(
-                        sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=800
+                        sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=600
                     )
                 if fin_err:
                     st.error(f"API Error: {fin_err}")
@@ -1847,7 +1847,7 @@ def main():
                     with st.spinner("Calling model and analyzing risk areas..."):
                         text, err = _call_openai(
                             system_prompt, user_prompt,
-                            api_key=api_key_for_call, model=model, max_tokens=800
+                            api_key=api_key_for_call, model=model, max_tokens=600
                         )
 
                     if err:
@@ -2023,7 +2023,7 @@ def main():
                 )
 
                 with st.spinner("Calling model to analyze evidence and draft observations..."):
-                    text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=1200)
+                    text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=600)
 
                 # 4) Parse JSON, store for Tab 5
                 observations = []
