@@ -220,7 +220,6 @@ def audit_vocab(df: pd.DataFrame) -> tuple[list[str], dict[str, list[str]]]:
 # ==============================
 # Evidence extraction utilities
 # ==============================
-
 try:
     import docx  # python-docx
 except Exception:
@@ -896,7 +895,6 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
         "Given company data and industry benchmarks, identify the top 3 control areas for internal audit focus. "
         "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
         "Do not use acronyms or abbreviations in your response. Always write out the full term."
-        "Return ONLY valid JSON (no markdown)."
     )
 
     chosen = _pick_worst_per_type(summary_rows, mtype_df, max_types=max_types)
@@ -942,8 +940,6 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
             "3. Data required (source systems and fields).\n"
             " Bold the title of each priority area."
             "State assumptions if data is missing."
-            "Return STRICT JSON exactly matching the keys/shape above. "
-            "No markdown fences; no commentary—only JSON."
         )
     return system, user
 
