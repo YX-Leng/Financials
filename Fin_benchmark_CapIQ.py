@@ -569,103 +569,62 @@ def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
     doc.build(elements)
     return buf.getvalue()
 
-
-def analysis_and_charts_to_pdf_bytes(
+def analysis_and_charts_to_html_bytes(
     analysis_md_text: str,
     figs: list[tuple[str, str, "go.Figure"]],
     title: str = "",
     subtitle: str = "",
     skipped: list[str] | None = None,
 ) -> bytes:
-   
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        title=title or "Analysis & Benchmarking",
-        author="Industry Benchmark Analysis Dashboard",
-        leftMargin=16 * mm,
-        rightMargin=16 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
-    )
-
-    styles = getSampleStyleSheet()
-    body = styles["BodyText"]
-    h2 = styles["Heading2"]
-    h3 = styles["Heading3"]
-
-    elements = []
+    # Minimal page shell + reuse your chip CSS
+    css = """
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 18px; }
+      h1,h2,h3 { margin: 0.2em 0 0.2em; }
+      .legend { font-size: 12px; color: #4b5563; margin: 6px 0 12px; }
+      .hr { height:1px; background:#eee; border:none; margin:10px 0 6px 0; }
+      .chip {display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;margin-right:6px;}
+      .chip-green {background:#def7e5;color:#065f46;border:1px solid #34d399;}
+      .chip-amber {background:#fff3cd;color:#8a6d3b;border:1px solid #fbbf24;}
+      .chip-red {background:#fde2e4;color:#7f1d1d;border:1px solid #f87171;}
+      .section { margin: 18px 0; }
+      .muted { color:#6b7280; }
+      .box { border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; background:#fff; }
+      .mt8 { margin-top: 8px; }
+    </style>
+    """
+    parts = [f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>"]
     if title:
-        elements.append(Paragraph(title, h2))
+        parts.append(f"<h2>{title}</h2>")
     if subtitle:
-        elements.append(Paragraph(subtitle, body))
-        elements.append(Spacer(1, 6))
+        parts.append(f"<div class='muted'>{subtitle}</div>")
 
-    # --- Analysis section (Markdown -> flowables) ---
+    # Analysis block (keep simple; browsers render Markdown-ish text fine)
     if analysis_md_text and analysis_md_text.strip():
-        elements.append(Paragraph("Financial Metrics – Analysis", h3))
+        parts.append("<div class='section'><h3>Financial Metrics – Analysis</h3>")
+        # escape minimal HTML; or render Markdown if you have 'markdown' installed
+        safe = analysis_md_text.replace("<", "&lt;").replace(">", "&gt;")
+        # lightweight formatting for bullets/headers:
+        safe = safe.replace("\n- ", "<br>• ").replace("\n* ", "<br>• ")
+        parts.append(f"<div class='box mt8' style='white-space:pre-wrap'>{safe}</div></div>")
 
-        bullets_acc = []
-        def flush_bullets():
-            nonlocal bullets_acc, elements
-            if bullets_acc:
-                items = [ListItem(Paragraph(b, body)) for b in bullets_acc]
-                elements.append(ListFlowable(items, bulletType="bullet", start="•"))
-                elements.append(Spacer(1, 6))
-                bullets_acc = []
-
-        for raw in (analysis_md_text or "").splitlines():
-            line = raw.rstrip()
-            if not line.strip():
-                flush_bullets()
-                elements.append(Spacer(1, 6))
-                continue
-            if line.startswith("### "):
-                flush_bullets()
-                elements.append(Paragraph(line[4:].strip(), h3))
-                continue
-            if line.startswith("## ") or line.startswith("# "):
-                flush_bullets()
-                elements.append(Paragraph(line.lstrip("# ").strip(), h3))
-                continue
-            if line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
-                bullets_acc.append(line.lstrip()[2:].strip())
-                continue
-            htmlish = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
-            elements.append(Paragraph(htmlish, body))
-        flush_bullets()
-
-    # --- Charts section ---
-    if figs:
-        elements.append(PageBreak())
-        elements.append(Paragraph("Benchmarking Charts", h3))
-        elements.append(Spacer(1, 6))
-
-        max_w = A4[0] - (16 + 16) * mm  # page width minus margins
-        for i, (metric_name, bucket, fig) in enumerate(figs, start=1):
-            try:
-                img_bytes = fig.to_image(format="png", scale=2)  # needs 'kaleido'
-            except Exception as e:
-                raise RuntimeError(
-                    "Plotly static export failed. Please install 'kaleido' "
-                    "(e.g., `pip install -U kaleido`) and rerun."
-                ) from e
-
-            ir = ImageReader(BytesIO(img_bytes))
-            iw, ih = ir.getSize()
-            scale = float(max_w) / float(iw)
-            elements.append(Paragraph(f"{i}. {metric_name} — <b>{bucket}</b>", body))
-            elements.append(RLImage(BytesIO(img_bytes), width=max_w, height=ih * scale))
-            elements.append(Spacer(1, 8))
+    # Charts (load Plotly.js once via CDN on the first figure)
+    parts.append("<div class='section'><h3>Benchmarking Charts</h3>")
+    first = True
+    for i, (metric_name, bucket, fig) in enumerate(figs, start=1):
+        chip_class = {"Healthy":"chip-green","Satisfactory":"chip-amber","Needs Improvement":"chip-red"}.get(bucket, "chip-amber")
+        parts.append(f"<div class='mt8'><div><strong>{i}. {metric_name}</strong> — <span class='chip {chip_class}'>{bucket}</span></div>")
+        parts.append(fig.to_html(full_html=False, include_plotlyjs='cdn' if first else False, config={"displaylogo": False}))
+        parts.append("</div>")
+        first = False
+    parts.append("</div>")  # end charts
 
     if skipped:
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph("Skipped metrics", h3))
-        elements.append(Paragraph(", ".join(skipped), body))
+        parts.append("<div class='section'><h3>Skipped metrics</h3>")
+        parts.append(f"<div class='muted'>{', '.join(skipped)}</div></div>")
 
-    doc.build(elements)
-    return buf.getvalue()
+    parts.append("</body></html>")
+    return "\n".join(parts).encode("utf-8")
 
 # =============================================================================
 # Visuals
@@ -1739,31 +1698,27 @@ def main():
                 # a cache key that changes when inputs change
                 combo_key = f"{company}|{exch}|{ind}|{fy_sel}|{mtype}|{len(figs)}|{hash(text)}"
                 if ss.get("bm_fin_combo_key") != combo_key:
-                    ss.pop("bm_fin_combo_pdf_bytes", None)
+                    ss.pop("bm_fin_combo_html_bytes", None)
                     ss["bm_fin_combo_key"] = combo_key
 
-                if "bm_fin_combo_pdf_bytes" not in ss:
-                    try:
-                        ss["bm_fin_combo_pdf_bytes"] = analysis_and_charts_to_pdf_bytes(
-                            analysis_md_text=text,
-                            figs=figs,
-                            title=f"{company} — Analysis & Benchmarking ({fy_sel})",
-                            subtitle=f"{exch} · {ind}",
-                            skipped=skipped_bm,  # from earlier in Tab 1
-                        )
-                    except RuntimeError as e:
-                        st.info(str(e))
-                        ss.pop("bm_fin_combo_pdf_bytes", None)
 
-                if "bm_fin_combo_pdf_bytes" in ss:
-                    st.download_button(
-                        "Download analysis + charts (.pdf)",
-                        data=ss["bm_fin_combo_pdf_bytes"],
-                        file_name="analysis_and_benchmarking.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key="dl_fin_plus_charts_pdf",
+                if "bm_fin_combo_html_bytes" not in ss:
+                    ss["bm_fin_combo_html_bytes"] = analysis_and_charts_to_html_bytes(
+                        analysis_md_text=text,
+                        figs=figs,
+                        title=f"{company} — Analysis & Benchmarking ({fy_sel})",
+                        subtitle=f"{exch} · {ind}",
+                        skipped=skipped_bm,
                     )
+
+                st.download_button(
+                    "Download analysis + charts (.html)",
+                    data=ss["bm_fin_combo_html_bytes"],
+                    file_name="analysis_and_benchmarking.html",
+                    mime="text/html",
+                    use_container_width=True,
+                    key="dl_fin_plus_charts_html",
+                )
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
