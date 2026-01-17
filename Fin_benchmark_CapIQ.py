@@ -1053,48 +1053,63 @@ def main():
     # TAB 3 — Suggested Audit Areas (Top 5)
     # -------------------------------------------------------------------------
     with tab_audit: 
-        st.subheader("Top 5 Suggested Audit Areas")
-        st.caption("Analyzes selected company metrics and industry benchmarks, then suggests auditable areas.")
+        st.subheader("Internal Audit Strategy")
         
-        # 1. Prepare ALL metrics for the helper
-        all_metrics_to_rank = []
-        for _, r in mtype_df.iterrows():
-            c = str(r["Metrics_Col"]).strip()
-            n = str(r["Metrics_Name"]).strip()
-            g = str(r["Metrics_Grade"]).strip()
-
-            val = pd.to_numeric(comp_row.iloc[0].get(c, np.nan), errors="coerce") if not comp_row.empty else np.nan
-            if pd.isna(val):
-                continue
-
-            p25 = p50 = p75 = np.nan
-            if p_row is not None and (c, "p25") in p_row.index:
-                p25 = pd.to_numeric(p_row[(c, "p25")], errors="coerce")
-                p50 = pd.to_numeric(p_row[(c, "p50")], errors="coerce")
-                p75 = pd.to_numeric(p_row[(c, "p75")], errors="coerce")
-
-            bucket = _classify_bucket(val, p25, p50, p75, g)
+        # --- 1. DATA FILTERING (Fixes the NameError) ---
+        sel_mask = (
+            (data_df["EXCHANGE"].astype(str) == exch)
+            & (data_df["INDUSTRY"].astype(str) == ind)
+            & (data_df["FY"].astype(str) == str(fy_sel))
+        )
+        df_slice = data_df.loc[sel_mask]
+        
+        # Identify the specific company row
+        comp_row = df_slice[df_slice["ENTITY_NAME"].astype(str).str.strip().str.lower() == company.strip().lower()]
+        if comp_row.empty and not df_slice.empty:
+            comp_row = df_slice.iloc[[0]]
             
-            # We collect everything; the helper will filter for the "worst"
-            all_metrics_to_rank.append({
-                "Metrics_Name": n,
-                "Metrics_Col": c,
-                "Metrics_Grade": g,
-                "value": float(val),
-                "value_str": f"{val:.4g}",
-                "p50": float(p50) if pd.notna(p50) else None,
-                "bucket": bucket,
-            })
+        # Identify the benchmark/percentile row
+        p_row = _try_get_percentile_row(pct_wide, exch, ind, str(fy_sel))
 
-        # 2. UI Elements
-        model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+        # --- 2. PREPARE METRICS FOR THE HELPER ---
+        all_metrics_to_rank = []
+        if not comp_row.empty:
+            for _, r in mtype_df.iterrows():
+                c = str(r["Metrics_Col"]).strip()
+                n = str(r["Metrics_Name"]).strip()
+                g = str(r["Metrics_Grade"]).strip()
+
+                val = pd.to_numeric(comp_row.iloc[0].get(c, np.nan), errors="coerce")
+                if pd.isna(val):
+                    continue
+
+                p25 = p50 = p75 = np.nan
+                if p_row is not None and (c, "p25") in p_row.index:
+                    p25 = pd.to_numeric(p_row[(c, "p25")], errors="coerce")
+                    p50 = pd.to_numeric(p_row[(c, "p50")], errors="coerce")
+                    p75 = pd.to_numeric(p_row[(c, "p75")], errors="coerce")
+
+                bucket = _classify_bucket(val, p25, p50, p75, g)
+                
+                all_metrics_to_rank.append({
+                    "Metrics_Name": n,
+                    "Metrics_Col": c,
+                    "Metrics_Grade": g,
+                    "value": float(val),
+                    "value_str": f"{val:.4g}",
+                    "p50": float(p50) if pd.notna(p50) else None,
+                    "bucket": bucket,
+                })
+
+        # --- 3. UI AND GENERATION ---
+        model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-4o"), key="audit_model")
         generate = st.button("Generate Audit Suggestions", type="primary")
 
         if generate:
             if not all_metrics_to_rank:
-                st.warning("No data found to analyze.")
+                st.warning("No problematic metrics found to analyze.")
             else:
-                # 3. USE THE HELPERS: They handle the "Top 5" and "Worst per Type" logic
+                # This uses the helpers we discussed to pick the 5 best examples
                 system_prompt, user_prompt = _build_audit_prompt(
                     company, exch, ind, str(fy_sel), 
                     all_metrics_to_rank, mtype_df, max_types=5
@@ -1104,11 +1119,11 @@ def main():
                 if not api_key_for_call:
                     st.error("OpenAI API key is missing.")
                 else:
-                    with st.spinner("Analyzing cross-category risks..."):
-                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
+                    with st.spinner("Analyzing risk areas..."):
+                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=800)
 
                     if err:
-                        st.error(err)
+                        st.error(f"API Error: {err}")
                     elif text:
                         st.success("Audit suggestions generated!")
                         st.markdown(text)
