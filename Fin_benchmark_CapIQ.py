@@ -591,7 +591,7 @@ def _extract_text_any(out_obj):
     except Exception:
         return ""
 
-def _call_openai(system_prompt, user_prompt, api_key, model=None, max_tokens=600):
+def _call_openai(system_prompt, user_prompt, api_key, model=None, max_tokens=800):
         if not api_key:
             return None, "OpenAI API key is not set."
 
@@ -718,7 +718,7 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
-                                       max_types=3, counts_only=False):
+                                       max_types=5, counts_only=False):
     system = (
         "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
         "Given company data and industry benchmarks, identify the top 3 control areas for internal audit focus. "
@@ -791,6 +791,10 @@ def main():
 
     # --- Sidebar: Always-visible Company Input (with auto-population) ---
     st.sidebar.header("Company Input")
+    
+    # --- Footer ---
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+    st.sidebar.caption("version 3.0 | 2026")
 
     # Exchange list (for initial default)
     exch_list = sorted(data_df["EXCHANGE"].dropna().astype(str).unique().tolist())
@@ -940,9 +944,6 @@ def main():
     st.markdown(f"**Company:** {company} &nbsp;&nbsp; **Exchange:** {exch} &nbsp;&nbsp; "
                 f"**Industry:** {ind} &nbsp;&nbsp; **FY:** {fy_sel}")
     
-    # --- Footer ---
-    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.0 | 2026")
 
     tab_bm, tab_yoy, tab_audit = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Audit Areas"])
 
@@ -1149,7 +1150,7 @@ def main():
                 # This uses the helpers we discussed to pick the 5 best examples
                 system_prompt, user_prompt = _build_audit_prompt(
                     company, exch, ind, str(fy_sel), 
-                    all_metrics_to_rank, mtype_df, max_types=3
+                    all_metrics_to_rank, mtype_df, max_types=5
                 )
                 
                 api_key_for_call = _get_openai_api_key()
@@ -1157,7 +1158,7 @@ def main():
                     st.error("OpenAI API key is missing.")
                 else:
                     with st.spinner("Calling OpenAI and analyzing risk areas..."):
-                        text, err = _call_openai(system_prompt, user_prompt, api_key= api_key_for_call, model=model, max_tokens=600)
+                        text, err = _call_openai(system_prompt, user_prompt, api_key= api_key_for_call, model=model, max_tokens=800)
 
                     if err:
                         st.error(f"API Error: {err}")
