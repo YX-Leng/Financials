@@ -1478,7 +1478,6 @@ def main():
 
         # --- 3. UI AND GENERATION ---
         model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
-        audit_df = load_audit_db()
         generate = st.button("Generate Audit Suggestions", type="primary")
 
         if generate:
@@ -1504,20 +1503,6 @@ def main():
                         st.success("Audit suggestions generated!")
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text
-                        
-                        work_json = None
-                        try:
-                            # If model ever wraps in ```json ... ```, strip fences defensively
-                            j = text.strip()
-                            if j.startswith("```"):
-                                j = j.strip("`")
-                                j = j[j.find("{") : j.rfind("}")+1]
-                            work_json = json.loads(j)
-                        except Exception as e:
-                            st.error(f"Could not parse JSON from model: {e}")
-                        if work_json:
-                            st.success("Audit suggestions generated and parsed.")
-                            st.session_state["ai_work_program"] = work_json
                             
                     else:
                         st.warning(
@@ -1530,10 +1515,6 @@ def main():
     # -------------------------------------------------------------------------
     # TAB 4 — Audit Work Program
     # -------------------------------------------------------------------------
-
-# ==============================
-# TAB 4 — Audit Work Program
-# ==============================
     with tab_wp:
         st.subheader("Audit Work Program — AI-Assisted Audit Testing")
 
