@@ -1895,188 +1895,188 @@ def main():
             audit_df = load_audit_db()
             scopes, subs_by_scope = audit_vocab(audit_df)
 
-        # Guard: no scopes available
-        if not scopes:
-            st.error("No scopes found in the Audit Work Program master.")
-            st.stop()
-
-        # Pick safe defaults
-        default_scope = st.session_state.get("wp_scope", scopes[0])
-        if default_scope not in scopes:
-            default_scope = scopes[0]
-
-        # Scope selector (full list)
-        sel_scope = st.selectbox(
-            "1) Scope",
-            scopes,
-            index=scopes.index(default_scope),
-            key="wp_scope"
-        )
-
-        # Resolve sub-process list for the selected scope
-        sub_list = subs_by_scope.get(sel_scope, [])
-        if not sub_list:
-            st.warning("No sub-processes found for the selected scope. Please choose another scope.")
-            st.stop()
-
-        # Default sub-process: last used if still valid, else first
-        default_sub = st.session_state.get("wp_subproc", sub_list[0])
-        if default_sub not in sub_list:
-            default_sub = sub_list[0]
-
-        # Sub-process selector (full list for the selected scope)
-        sel_sub = st.selectbox(
-            "2) Sub-process",
-            sub_list,
-            index=sub_list.index(default_sub),
-            key="wp_subproc"
-        )
-
-        # Retrieve row and show Risk/Control 
-        row = audit_df[(audit_df["Scope"] == sel_scope) & (audit_df["Sub-process"] == sel_sub)]
-        if row.empty:
-            st.error("No work program row found for this selection.")
-            st.stop()
-
-        rec = row.iloc[0]
-        st.markdown("**Risk**")
-        st.info(rec["Risk"])
-        st.markdown("**Control Description**")
-        st.info(rec["Control Description"])
-
-
-        # ---- Documents required (column F) -> uploaders (use robust parser) ----
-        st.markdown("**Documents required**")
-        doc_items = _parse_documents_required(rec["Documents required"])
-        uploaded = {}
-        for i, lab in enumerate(doc_items):
-            uploaded[lab] = st.file_uploader(
-                f"Upload: {lab}", type=None, accept_multiple_files=False,
-                key=f"doc_{sel_scope}_{sel_sub}_{i}"
-            )
-
-        st.markdown("---")
-
-        # ---- OpenAI Draft Runner: open files, extract excerpts, evaluate vs test steps ----
-        submit_wp = st.button("Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}")
-
-        if submit_wp:
-            # 1) Save + parse files
-            os.makedirs("uploads", exist_ok=True)
-            saved = []
-            parsed_docs = []
-            for label, file in uploaded.items():
-                if file is not None:
-                    safe_name = f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}".replace(" ", "_")
-                    path = os.path.join("uploads", safe_name)
-                    with open(path, "wb") as f:
-                        f.write(file.getbuffer())
-                    text, meta = extract_text_from_upload(file)
-                    meta["label"] = label
-                    parsed_docs.append({"text": text, "meta": meta})
-                    saved.append({"label": label, "path": path, "original_name": file.name, "type": meta.get("type", "")})
-
-            # 2) Build concise evidence pack
-            evidence = build_relevant_excerpts(rec["Audit Test Steps"], parsed_docs)
-            ev_lines = []
-            for j, ev in enumerate(evidence, start=1):
-                fname = ev["name"]
-                ev_lines.append(f"[snippet {j}] file={fname} · score={ev['score']:.2f}\n{ev['excerpt']}\n")
-            evidence_block = "\n".join(ev_lines) if ev_lines else "(no snippets extracted)"
-
-            # 3) Call OpenAI (reuses your existing helpers and model setting)
-            model = os.environ.get("OPENAI_MODEL", st.session_state.get("audit_model", "gpt-5"))
-            api_key = _get_openai_api_key()
-            if not api_key:
-                st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+            # Guard: no scopes available
+            if not scopes:
+                st.error("No scopes found in the Audit Work Program master.")
                 st.stop()
 
-            system_prompt = (
-                "You are an experienced internal auditor. You will be given:\n"
-                "1) Company context (scope, sub-process, risk, control);\n"
-                "2) Audit Test Steps; and\n"
-                "3) Evidence excerpts extracted from uploaded documents.\n\n"
-                "Task:\n"
-                "- Evaluate the evidence against each audit step.\n"
-                "- Identify potential observations (exceptions, control gaps, anomalies or missing evidence).\n"
-                "- Classify severity (High / Medium / Low).\n"
-                "- Propose a concise root cause and recommendation.\n"
-                "- Where applicable, cite the evidence by file name and “snippet#”.\n\n"
-                "Return ONLY valid JSON of the shape:\n"
-                "{\n"
-                "  \"observations\": [\n"
-                "    {\"observation\":\"...\", \"severity\":\"High|Medium|Low\", \"root_cause\":\"...\", \"recommendation\":\"...\", \"evidence_refs\":[{\"file\":\"...\",\"snippet_id\":1}]}\n"
-                "  ]\n"
-                "}\n"
-                "If there are no issues, return {\"observations\": []}."
+            # Pick safe defaults
+            default_scope = st.session_state.get("wp_scope", scopes[0])
+            if default_scope not in scopes:
+                default_scope = scopes[0]
+
+            # Scope selector (full list)
+            sel_scope = st.selectbox(
+                "1) Scope",
+                scopes,
+                index=scopes.index(default_scope),
+                key="wp_scope"
             )
 
-            user_prompt = (
-                f"Company: {company}\n"
-                f"Scope: {sel_scope}\n"
-                f"Sub-process: {sel_sub}\n\n"
-                f"Risk:\n{rec['Risk']}\n\n"
-                f"Control Description:\n{rec['Control Description']}\n\n"
-                f"Audit Test Steps:\n{rec['Audit Test Steps']}\n\n"
-                f"Evidence Excerpts (top-ranked):\n{evidence_block}\n\n"
-                "Draft observations (if any). Use only the JSON schema specified."
+            # Resolve sub-process list for the selected scope
+            sub_list = subs_by_scope.get(sel_scope, [])
+            if not sub_list:
+                st.warning("No sub-processes found for the selected scope. Please choose another scope.")
+                st.stop()
+
+            # Default sub-process: last used if still valid, else first
+            default_sub = st.session_state.get("wp_subproc", sub_list[0])
+            if default_sub not in sub_list:
+                default_sub = sub_list[0]
+
+            # Sub-process selector (full list for the selected scope)
+            sel_sub = st.selectbox(
+                "2) Sub-process",
+                sub_list,
+                index=sub_list.index(default_sub),
+                key="wp_subproc"
             )
 
-            with st.spinner("Calling model to analyze evidence and draft observations..."):
-                text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=1200)
+            # Retrieve row and show Risk/Control 
+            row = audit_df[(audit_df["Scope"] == sel_scope) & (audit_df["Sub-process"] == sel_sub)]
+            if row.empty:
+                st.error("No work program row found for this selection.")
+                st.stop()
 
-            # 4) Parse JSON, store for Tab 5
-            observations = []
-            if err:
-                st.error(f"OpenAI call failed: {err}")
-            else:
-                try:
-                    payload = text.strip()
-                    if payload.startswith("```"):
-                        payload = payload.strip("`")
-                        payload = payload[payload.find("{"): payload.rfind("}")+1]
-                    out = json.loads(payload)
-                    observations = out.get("observations", [])
-                    if not isinstance(observations, list):
-                        observations = []
-                except Exception as e:
-                    st.warning(f"Could not parse model JSON: {e}")
-                    observations = []
+            rec = row.iloc[0]
+            st.markdown("**Risk**")
+            st.info(rec["Risk"])
+            st.markdown("**Control Description**")
+            st.info(rec["Control Description"])
 
-            if observations:
-                st.success("Observations drafted.")
-                if "audit_observations" not in st.session_state:
-                    st.session_state["audit_observations"] = []
-                # Map snippet_id -> original file short name; then to saved path
-                snippet_to_file = {}
+
+            # ---- Documents required (column F) -> uploaders (use robust parser) ----
+            st.markdown("**Documents required**")
+            doc_items = _parse_documents_required(rec["Documents required"])
+            uploaded = {}
+            for i, lab in enumerate(doc_items):
+                uploaded[lab] = st.file_uploader(
+                    f"Upload: {lab}", type=None, accept_multiple_files=False,
+                    key=f"doc_{sel_scope}_{sel_sub}_{i}"
+                )
+
+            st.markdown("---")
+
+            # ---- OpenAI Draft Runner: open files, extract excerpts, evaluate vs test steps ----
+            submit_wp = st.button("Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}")
+
+            if submit_wp:
+                # 1) Save + parse files
+                os.makedirs("uploads", exist_ok=True)
+                saved = []
+                parsed_docs = []
+                for label, file in uploaded.items():
+                    if file is not None:
+                        safe_name = f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}".replace(" ", "_")
+                        path = os.path.join("uploads", safe_name)
+                        with open(path, "wb") as f:
+                            f.write(file.getbuffer())
+                        text, meta = extract_text_from_upload(file)
+                        meta["label"] = label
+                        parsed_docs.append({"text": text, "meta": meta})
+                        saved.append({"label": label, "path": path, "original_name": file.name, "type": meta.get("type", "")})
+
+                # 2) Build concise evidence pack
+                evidence = build_relevant_excerpts(rec["Audit Test Steps"], parsed_docs)
+                ev_lines = []
                 for j, ev in enumerate(evidence, start=1):
-                    snippet_to_file[j] = ev["name"]
+                    fname = ev["name"]
+                    ev_lines.append(f"[snippet {j}] file={fname} · score={ev['score']:.2f}\n{ev['excerpt']}\n")
+                evidence_block = "\n".join(ev_lines) if ev_lines else "(no snippets extracted)"
 
-                enriched = []
-                for o in observations:
-                    refs = o.get("evidence_refs", []) or []
-                    files_from_refs = []
-                    for r in refs:
-                        sn = int(r.get("snippet_id", 0))
-                        fname = snippet_to_file.get(sn)
-                        if fname:
-                            match = next((s for s in saved if s["original_name"] == fname), None)
-                            files_from_refs.append(match["path"] if match else fname)
-                    if not files_from_refs:
-                        files_from_refs = [s["path"] for s in saved]  # fallback
+                # 3) Call OpenAI (reuses your existing helpers and model setting)
+                model = os.environ.get("OPENAI_MODEL", st.session_state.get("audit_model", "gpt-5"))
+                api_key = _get_openai_api_key()
+                if not api_key:
+                    st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+                    st.stop()
 
-                    enriched.append({
-                        "company": company, "exchange": exch, "industry": ind, "fy": str(fy_sel),
-                        "scope": sel_scope, "sub_process": sel_sub,
-                        "observation": o.get("observation", ""),
-                        "severity": o.get("severity", ""),
-                        "root_cause": o.get("root_cause", ""),
-                        "recommendation": o.get("recommendation", ""),
-                        "evidence_links": files_from_refs,
-                    })
-                st.session_state["audit_observations"].extend(enriched)
-            else:
-                st.info("No issues drafted by the model; consider adding more evidence or refining steps.")
+                system_prompt = (
+                    "You are an experienced internal auditor. You will be given:\n"
+                    "1) Company context (scope, sub-process, risk, control);\n"
+                    "2) Audit Test Steps; and\n"
+                    "3) Evidence excerpts extracted from uploaded documents.\n\n"
+                    "Task:\n"
+                    "- Evaluate the evidence against each audit step.\n"
+                    "- Identify potential observations (exceptions, control gaps, anomalies or missing evidence).\n"
+                    "- Classify severity (High / Medium / Low).\n"
+                    "- Propose a concise root cause and recommendation.\n"
+                    "- Where applicable, cite the evidence by file name and “snippet#”.\n\n"
+                    "Return ONLY valid JSON of the shape:\n"
+                    "{\n"
+                    "  \"observations\": [\n"
+                    "    {\"observation\":\"...\", \"severity\":\"High|Medium|Low\", \"root_cause\":\"...\", \"recommendation\":\"...\", \"evidence_refs\":[{\"file\":\"...\",\"snippet_id\":1}]}\n"
+                    "  ]\n"
+                    "}\n"
+                    "If there are no issues, return {\"observations\": []}."
+                )
+
+                user_prompt = (
+                    f"Company: {company}\n"
+                    f"Scope: {sel_scope}\n"
+                    f"Sub-process: {sel_sub}\n\n"
+                    f"Risk:\n{rec['Risk']}\n\n"
+                    f"Control Description:\n{rec['Control Description']}\n\n"
+                    f"Audit Test Steps:\n{rec['Audit Test Steps']}\n\n"
+                    f"Evidence Excerpts (top-ranked):\n{evidence_block}\n\n"
+                    "Draft observations (if any). Use only the JSON schema specified."
+                )
+
+                with st.spinner("Calling model to analyze evidence and draft observations..."):
+                    text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=1200)
+
+                # 4) Parse JSON, store for Tab 5
+                observations = []
+                if err:
+                    st.error(f"OpenAI call failed: {err}")
+                else:
+                    try:
+                        payload = text.strip()
+                        if payload.startswith("```"):
+                            payload = payload.strip("`")
+                            payload = payload[payload.find("{"): payload.rfind("}")+1]
+                        out = json.loads(payload)
+                        observations = out.get("observations", [])
+                        if not isinstance(observations, list):
+                            observations = []
+                    except Exception as e:
+                        st.warning(f"Could not parse model JSON: {e}")
+                        observations = []
+
+                if observations:
+                    st.success("Observations drafted.")
+                    if "audit_observations" not in st.session_state:
+                        st.session_state["audit_observations"] = []
+                    # Map snippet_id -> original file short name; then to saved path
+                    snippet_to_file = {}
+                    for j, ev in enumerate(evidence, start=1):
+                        snippet_to_file[j] = ev["name"]
+
+                    enriched = []
+                    for o in observations:
+                        refs = o.get("evidence_refs", []) or []
+                        files_from_refs = []
+                        for r in refs:
+                            sn = int(r.get("snippet_id", 0))
+                            fname = snippet_to_file.get(sn)
+                            if fname:
+                                match = next((s for s in saved if s["original_name"] == fname), None)
+                                files_from_refs.append(match["path"] if match else fname)
+                        if not files_from_refs:
+                            files_from_refs = [s["path"] for s in saved]  # fallback
+
+                        enriched.append({
+                            "company": company, "exchange": exch, "industry": ind, "fy": str(fy_sel),
+                            "scope": sel_scope, "sub_process": sel_sub,
+                            "observation": o.get("observation", ""),
+                            "severity": o.get("severity", ""),
+                            "root_cause": o.get("root_cause", ""),
+                            "recommendation": o.get("recommendation", ""),
+                            "evidence_links": files_from_refs,
+                        })
+                    st.session_state["audit_observations"].extend(enriched)
+                else:
+                    st.info("No issues drafted by the model; consider adding more evidence or refining steps.")
 
 
     # -------------------------------------------------------------------------
@@ -2085,7 +2085,7 @@ def main():
 
     with tab_obs:
         st.subheader("Audit Observations")
-        obs = st.session_state.get("audit_observations", [])
+        obs = st.session_state.get("audit_observations", "")
         if not obs:
             st.info("No observations yet. Run a work program in Tab 4.")
         else:
