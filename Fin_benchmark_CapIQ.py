@@ -728,26 +728,24 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
 
     chosen = _pick_worst_per_type(summary_rows, mtype_df, max_types=max_types)
 
-    # Minimal context header
-    header = (
-        f"Industry: {industry}\n"
-        f"Fiscal year: {fy}\n"
-    )
-
     # Compact bullets (one line per type) without dumping full percentiles
-    lines = []
-    for r in chosen:
-        lines.append(
-            f"- {r.get('Type','Uncategorized')}: {r['Metrics_Name']} "
-            f"(value={r['value_str']}; grade={r['Metrics_Grade']}; bucket={r['bucket']})"
-        )
+    lines = [
+        f"- {r['Metrics_Name']} (grade={r['Metrics_Grade']})"
+        for r in chosen
+    ]
+    metrics_summary = "\n".join(lines)
 
     user = (
-            "Suggest internal control areas for audit based on potential anomalies you infer from common risk patterns in this industry. "
+            f"Company: {company}\n"
+            f"Industry: {industry}\n"
+            f"Year: {fy}\n"
+            f"Weakest Financial Metrics: {metrics_summary}\n\n"
+            "Suggest internal control areas for audit based on potential anomalies you infer from common risk patterns in the industry that this industry."
             "For each area, include:\n"
             "1. Risk rationale.\n"
             "2. Suggested audit procedures (exceptions/fraud focus).\n"
             "3. Data required (source systems and fields).\n"
+            " Bold the title of each priority area."
             "State assumptions if data is missing."
         )
     return system, user
@@ -1091,7 +1089,8 @@ def main():
     # TAB 3 — Suggested Audit Areas (Top 5)
     # -------------------------------------------------------------------------
     with tab_audit: 
-        st.subheader("Internal Audit Strategy")
+        st.subheader("Suggested Audit Areas")
+        st.caption("Analyzes selected company metrics and industry benchmarks, then suggests auditable areas.")
         
         # --- 1. DATA FILTERING (Fixes the NameError) ---
         sel_mask = (
@@ -1157,7 +1156,7 @@ def main():
                 if not api_key_for_call:
                     st.error("OpenAI API key is missing.")
                 else:
-                    with st.spinner("Analyzing risk areas..."):
+                    with st.spinner("Calling OpenAI and analyzing risk areas..."):
                         text, err = _call_openai(system_prompt, user_prompt, api_key= api_key_for_call, model=model, max_tokens=600)
 
                     if err:
