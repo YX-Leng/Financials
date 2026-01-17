@@ -1105,6 +1105,8 @@ def _convert_suggestions_to_json(readable_text: str, model: str = None) -> dict:
 # =============================================================================
 
 def _reset_app_state(full_cache_reset: bool = False):
+    st.session_state["company_name_input"] = ""
+    
     # 1) Clear known keys from this app
     keys_to_clear = [
         # Autofill scaffolding
