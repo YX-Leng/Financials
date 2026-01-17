@@ -1858,9 +1858,6 @@ def main():
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text  
 
-                with st.expander("Debug info"):
-                    st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-
                 if st.session_state.get("ai_audit_suggestions"):
                     st.markdown(st.session_state["ai_audit_suggestions"])
                     # Build once and cache in session
