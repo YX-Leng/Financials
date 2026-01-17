@@ -1452,7 +1452,7 @@ def main():
             st.subheader("Financial Metrics - Analysis")
 
             # Reuse model selection pattern from Tab 3 for consistency
-            fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="fin_model")
+            fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
 
             # Currency by exchange already computed as `ccy` in the sidebar; reuse it here if in scope
             currency_label = ccy if 'ccy' in locals() else ""
@@ -1476,7 +1476,7 @@ def main():
                     )
                     with st.spinner("Calling model and drafting financial analysis..."):
                         fin_text, fin_err = _call_openai(
-                            sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=900
+                            sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=800
                         )
                     if fin_err:
                         st.error(f"API Error: {fin_err}")
