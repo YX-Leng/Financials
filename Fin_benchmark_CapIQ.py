@@ -10,7 +10,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
+import json
+import io
+import re
+from difflib import SequenceMatcher
 
 # =============================================================================
 # Self-launching Streamlit bootstrap
@@ -79,6 +82,9 @@ def _spawn_streamlit():
 DATA_FILE = "Company_Financials_CapIQ.xlsx"
 DATA_SHEET = "data"
 METRICS_TYPE_SHEET = "metrics_type"
+
+AUDIT_DB_FILE = "Audit_Work_Program.xlsx"
+AUDIT_DB_SHEET = None
 
 CURRENCY_BY_EXCHANGE = {
     "SGX": "SGD", "NYSE": "USD", "NYSE ARCA": "USD", "NYSE MKT": "USD",
@@ -183,6 +189,172 @@ def yoy_company_series(df, exchange, industry, company) -> pd.DataFrame:
     out = df.loc[mask].copy()
     out["FY"] = out["FY"].astype(str)
     return out
+
+@st.cache_data(show_spinner=False)
+def load_audit_db(path: str = AUDIT_DB_FILE, sheet: str | None = AUDIT_DB_SHEET) -> pd.DataFrame:
+    if not os.path.exists(path):
+        st.error(f"Missing audit master Excel file: {path}")
+        st.stop()
+    xl = pd.ExcelFile(path, engine="openpyxl")
+    sh = sheet or xl.sheet_names[0]
+    df = xl.parse(sh)
+
+    # Normalize expected column names (exact names in your file)
+    expected = ["Scope", "Sub-process", "Risk", "Control Description", "Audit Test Steps", "Documents required"]
+    missing = [c for c in expected if c not in df.columns]
+    if missing:
+        st.error(f"Audit DB missing columns: {missing} (expected: {expected})")
+        st.stop()
+
+    # Basic cleanup
+    for c in expected:
+        df[c] = df[c].astype(str).str.strip()
+    return df
+
+@st.cache_data(show_spinner=False)
+def audit_vocab(df: pd.DataFrame) -> tuple[list[str], dict[str, list[str]]]:
+    scopes = sorted(df["Scope"].dropna().unique().tolist())
+    subs_by_scope = {s: sorted(df.loc[df["Scope"] == s, "Sub-process"].dropna().unique().tolist()) for s in scopes}
+    return scopes, subs_by_scope
+
+# ==============================
+# Evidence extraction utilities
+# ==============================
+
+try:
+    import docx  # python-docx
+except Exception:
+    docx = None
+
+try:
+    import PyPDF2
+except Exception:
+    PyPDF2 = None
+
+MAX_FILE_CHARS = 60_000          # hard cap per file after parsing
+CHUNK_SIZE_CHARS = 2_000         # size for scoring chunks
+TOP_K_CHUNKS_PER_FILE = 5        # keep top-k chunks per file
+MAX_TOTAL_EXCERPTS = 20          # cross-file cap to limit tokens
+
+def _norm(s: str) -> str:
+    s = str(s or "")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _score_overlap(query: str, text: str) -> float:
+    """Simple blended score using sequence similarity and token overlap."""
+    from math import sqrt
+    q = _norm(query).lower()
+    t = _norm(text).lower()
+    if not q or not t:
+        return 0.0
+    seq = SequenceMatcher(None, q, t).ratio()
+    q_tokens = set(re.findall(r"[a-z0-9]+", q))
+    t_tokens = set(re.findall(r"[a-z0-9]+", t))
+    if not q_tokens or not t_tokens:
+        return seq
+    jacc = len(q_tokens & t_tokens) / max(1, len(q_tokens | t_tokens))
+    return 0.6 * seq + 0.4 * jacc
+
+def _chunk_text(text: str, size: int = CHUNK_SIZE_CHARS) -> list[str]:
+    text = _norm(text)
+    if len(text) <= size:
+        return [text]
+    chunks = [text[i:i+size] for i in range(0, min(len(text), MAX_FILE_CHARS), size)]
+    return chunks
+
+def extract_text_from_upload(uploaded_file) -> tuple[str, dict]:
+    """
+    Return (text, meta). meta contains basic info for referencing.
+    Supported: PDF, DOCX, XLSX/XLS, CSV, TXT.
+    """
+    import pandas as pd
+    name = getattr(uploaded_file, "name", "file")
+    meta = {"name": name, "size": getattr(uploaded_file, "size", None), "type": ""}
+    raw = uploaded_file.read()
+    uploaded_file.seek(0)  # reset
+
+    lower = name.lower()
+    text = ""
+    try:
+        if lower.endswith(".pdf") and PyPDF2 is not None:
+            meta["type"] = "pdf"
+            reader = PyPDF2.PdfReader(io.BytesIO(raw))
+            pages = []
+            for i, p in enumerate(reader.pages):
+                try:
+                    pages.append(p.extract_text() or "")
+                except Exception:
+                    pages.append("")
+            text = "\n\n".join([f"[Page {i+1}] {t}" for i, t in enumerate(pages)])
+        elif lower.endswith(".docx") and docx is not None:
+            meta["type"] = "docx"
+            d = docx.Document(io.BytesIO(raw))
+            paras = [p.text for p in d.paragraphs]
+            text = "\n".join(paras)
+            # tables (simple)
+            for tbl in d.tables:
+                for r in tbl.rows:
+                    cells = [c.text for c in r.cells]
+                    if any(_norm(x) for x in cells):
+                        text += "\n" + " | ".join(cells)
+        elif lower.endswith(".xlsx") or lower.endswith(".xls"):
+            meta["type"] = "excel"
+            engine = "openpyxl" if lower.endswith(".xlsx") else "xlrd"
+            xls = pd.ExcelFile(io.BytesIO(raw), engine=engine)
+            parts = []
+            for si, sh in enumerate(xls.sheet_names[:3]):
+                try:
+                    df = xls.parse(sh)
+                except Exception:
+                    continue
+                if df.empty:
+                    continue
+                head = df.head(15).fillna("").astype(str)
+                sample_txt = head.to_csv(index=False)
+                parts.append(f"[Sheet {si+1}: {sh}]\n{sample_txt}")
+            text = "\n\n".join(parts)
+        elif lower.endswith(".csv"):
+            meta["type"] = "csv"
+            import pandas as pd
+            df = pd.read_csv(io.BytesIO(raw))
+            if not df.empty:
+                text = df.head(50).to_csv(index=False)
+        elif lower.endswith(".txt"):
+            meta["type"] = "txt"
+            text = raw.decode("utf-8", errors="ignore")
+        else:
+            meta["type"] = "binary"
+            text = ""
+    except Exception as e:
+        meta["error"] = f"parse_error: {e}"
+        text = ""
+
+    if len(text) > MAX_FILE_CHARS:
+        text = text[:MAX_FILE_CHARS] + "\n...[truncated]..."
+    return text, meta
+
+def build_relevant_excerpts(test_steps: str, docs: list[dict]) -> list[dict]:
+    """
+    For each file: chunk -> score vs test_steps -> keep top-K chunks.
+    Return list of {name, type, excerpt, score}.
+    """
+    q = _norm(test_steps)
+    all_excerpts = []
+    for d in docs:
+        chunks = _chunk_text(d.get("text", ""))
+        scored = [(c, _score_overlap(q, c)) for c in chunks]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        for c, sc in scored[:TOP_K_CHUNKS_PER_FILE]:
+            all_excerpts.append({
+                "name": d["meta"].get("name"),
+                "type": d["meta"].get("type"),
+                "excerpt": c,
+                "score": float(sc),
+            })
+    all_excerpts.sort(key=lambda x: x["score"], reverse=True)
+    return all_excerpts[:MAX_TOTAL_EXCERPTS]
+
 
 # =============================================================================
 # Matching & autopopulate helpers 
@@ -718,22 +890,45 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
-                                       max_types=5, counts_only=False):
+                                       max_types=3, counts_only=False):
     system = (
         "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
         "Given company data and industry benchmarks, identify the top 3 control areas for internal audit focus. "
         "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
         "Do not use acronyms or abbreviations in your response. Always write out the full term."
+        "Return ONLY valid JSON (no markdown)."
     )
 
     chosen = _pick_worst_per_type(summary_rows, mtype_df, max_types=max_types)
-
-    # Compact bullets (one line per type) without dumping full percentiles
     lines = [
         f"- {r['Metrics_Name']} (grade={r['Metrics_Grade']})"
-        for r in chosen
-    ]
+        for r in chosen]
     metrics_summary = "\n".join(lines)
+
+    schema = {
+        "work_program": {
+            "company": company,
+            "exchange": exchange,
+            "industry": industry,
+            "fy": f"{fy}",
+            "top_areas": [
+                {
+                    "scope_name": "free-text scope name (e.g., Inventory Costing)",
+                    "scope_keywords": ["tokens to help mapping, e.g., inventory, cost, standard"],
+                    "sub_process_name": "free-text sub-process (e.g., Standard cost updates & revaluations)",
+                    "sub_process_keywords": ["e.g., revaluation, standard cost, delta, effective date"],
+                    "risk": "plain language risk rationale",
+                    "control_description": "plain language control description",
+                    "procedures": [
+                        "succinct, step-by-step audit procedures"
+                    ],
+                    "data_required": [
+                        "specific documents and data fields to upload"
+                    ]
+                }
+            ]
+        }
+    }
 
     user = (
             f"Company: {company}\n"
@@ -747,6 +942,8 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
             "3. Data required (source systems and fields).\n"
             " Bold the title of each priority area."
             "State assumptions if data is missing."
+            "Return STRICT JSON exactly matching the keys/shape above. "
+            "No markdown fences; no commentary—only JSON."
         )
     return system, user
 
@@ -763,6 +960,145 @@ def _is_number_str(x: Optional[str]) -> bool:
     except Exception:
         return False
 
+# ---- Normalization & tokenization ----
+def _norm_text(s: str | None) -> str:
+    if s is None:
+        return ""
+    s = str(s).lower()
+    s = re.sub(r"[^a-z0-9\s/\-+&]", " ", s)  # keep some useful symbols
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _tokens(s: str) -> set[str]:
+    return set(_norm_text(s).split())
+
+def _bigrams(s: str) -> set[tuple[str, str]]:
+    toks = _norm_text(s).split()
+    return set(zip(toks, toks[1:])) if len(toks) > 1 else set()
+
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 0.0
+    return len(a & b) / max(1, len(a | b))
+
+def _seq_ratio(a: str, b: str) -> float:
+    return SequenceMatcher(None, _norm_text(a), _norm_text(b)).ratio()
+
+# ---- Optional synonym map from an Excel "Synonyms" sheet (Type, From, To) ----
+@st.cache_data(show_spinner=False)
+def load_synonyms_map(path: str = AUDIT_DB_FILE) -> dict[tuple[str, str], str]:
+    try:
+        xl = pd.ExcelFile(path, engine="openpyxl")
+        if "Synonyms" not in xl.sheet_names:
+            return {}
+        df = xl.parse("Synonyms")
+        # expected columns: Type (Scope/Sub-process), From, To
+        out = {}
+        for _, r in df.iterrows():
+            typ = str(r.get("Type", "")).strip()
+            frm = _norm_text(r.get("From", ""))
+            to  = str(r.get("To", "")).strip()
+            if typ and frm and to:
+                out[(typ, frm)] = to
+        return out
+    except Exception:
+        return {}
+
+# ---- Scoring (label + optional keywords vs candidate + context) ----
+def _score_label_to_candidate(label: str, candidate: str,
+                              extra_keywords: list[str] | None = None,
+                              candidate_context: list[str] | None = None) -> float:
+    ek = " ".join(extra_keywords or [])
+    comp_a = f"{label} {ek}".strip()
+    ctx = " ".join(candidate_context or [])
+    # base similarities
+    s1 = _seq_ratio(comp_a, candidate)
+    j1 = _jaccard(_tokens(comp_a), _tokens(candidate))
+    j2 = _jaccard(_bigrams(comp_a), _bigrams(candidate))
+    # optional context boost
+    j_ctx = _jaccard(_tokens(comp_a), _tokens(ctx)) * 0.5 if ctx else 0.0
+    # weighted blend (tune to taste)
+    score = 0.50 * s1 + 0.30 * j1 + 0.15 * j2 + 0.05 * j_ctx
+    return float(score)
+
+# ---- Scope candidate ranking ----
+def _rank_scopes(area: dict, audit_df: pd.DataFrame, synonyms: dict | None = None) -> list[tuple[str, float]]:
+    label = area.get("scope_name") or area.get("scope") or ""
+    kws   = area.get("scope_keywords", []) or []
+    if synonyms:
+        label = synonyms.get(("Scope", _norm_text(label)), label)
+
+    scopes = sorted(audit_df["Scope"].dropna().unique().tolist())
+    # Context per scope: sub-process names + a sample of risk/controls
+    ctx_by_scope = {}
+    for s in scopes:
+        subnames = audit_df.loc[audit_df["Scope"] == s, "Sub-process"].astype(str).unique().tolist()
+        risks    = audit_df.loc[audit_df["Scope"] == s, "Risk"].astype(str).tolist()[:10]
+        ctrls    = audit_df.loc[audit_df["Scope"] == s, "Control Description"].astype(str).tolist()[:10]
+        ctx_by_scope[s] = ["; ".join(subnames), "; ".join(risks), "; ".join(ctrls)]
+
+    scored = []
+    for s in scopes:
+        scored.append((s, _score_label_to_candidate(label, s, kws, candidate_context=ctx_by_scope[s])))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+# ---- Sub-process candidate ranking (within a scope) ----
+def _rank_subprocess(area: dict, audit_df: pd.DataFrame, scope: str,
+                     synonyms: dict | None = None) -> list[tuple[str, float]]:
+    label = area.get("sub_process_name") or area.get("sub_process") or ""
+    kws   = area.get("sub_process_keywords", []) or []
+    if synonyms:
+        label = synonyms.get(("Sub-process", _norm_text(label)), label)
+
+    subs = sorted(audit_df.loc[audit_df["Scope"] == scope, "Sub-process"].dropna().unique().tolist())
+    ctx_by_sub = {}
+    for sp in subs:
+        r = audit_df[(audit_df["Scope"] == scope) & (audit_df["Sub-process"] == sp)]
+        risk  = r["Risk"].iloc[0] if not r.empty else ""
+        ctrl  = r["Control Description"].iloc[0] if not r.empty else ""
+        ctx_by_sub[sp] = [str(risk), str(ctrl)]
+
+    scored = []
+    for sp in subs:
+        scored.append((sp, _score_label_to_candidate(label, sp, kws, candidate_context=ctx_by_sub[sp])))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+# ---- Full mapping of all top_areas ----
+def map_ai_to_master(ai_json: dict, audit_df: pd.DataFrame,
+                     auto_threshold: float = 0.82, review_threshold: float = 0.60,
+                     synonyms_map: dict | None = None) -> list[dict]:
+    areas = (ai_json or {}).get("work_program", {}).get("top_areas", [])
+    mappings = []
+    for a in areas:
+        scope_cands = _rank_scopes(a, audit_df, synonyms_map)
+        scope_match, scope_score = scope_cands[0]
+        if scope_score < review_threshold:
+            mappings.append({
+                "area": a,
+                "status": "no_match",
+                "reason": "scope_below_threshold",
+                "scope_candidates": scope_cands[:5],
+            })
+            continue
+        sub_cands = _rank_subprocess(a, audit_df, scope_match, synonyms_map)
+        sub_match, sub_score = sub_cands[0]
+        status = "auto" if (scope_score >= auto_threshold and sub_score >= auto_threshold) else "review"
+
+        row = audit_df[(audit_df["Scope"] == scope_match) & (audit_df["Sub-process"] == sub_match)].iloc[0]
+        mappings.append({
+            "area": a,
+            "status": status,
+            "mapped_scope": scope_match,
+            "mapped_sub_process": sub_match,
+            "scope_score": float(scope_score),
+            "sub_score": float(sub_score),
+            "row_index": int(row.name),
+            "scope_candidates": scope_cands[:5],
+            "sub_candidates": sub_cands[:5],
+        })
+    return mappings
 
 # =============================================================================
 # MAIN UI
@@ -792,10 +1128,6 @@ def main():
     # --- Sidebar: Always-visible Company Input (with auto-population) ---
     st.sidebar.header("Company Input")
     
-    # --- Footer ---
-    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.0 | 2026")
-
     # Exchange list (for initial default)
     exch_list = sorted(data_df["EXCHANGE"].dropna().astype(str).unique().tolist())
     default_exch_idx = exch_list.index("SGX") if "SGX" in exch_list else 0
@@ -899,6 +1231,10 @@ def main():
     if not numeric_ok:
         st.sidebar.warning("Please complete all financial fields with valid numbers before submitting.")
 
+    # --- Footer ---
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+    st.sidebar.caption("version 3.0 | 2026")
+
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
     submit = st.sidebar.button("Submit", type="primary", disabled=not can_submit)
@@ -943,9 +1279,10 @@ def main():
 
     st.markdown(f"**Company:** {company} &nbsp;&nbsp; **Exchange:** {exch} &nbsp;&nbsp; "
                 f"**Industry:** {ind} &nbsp;&nbsp; **FY:** {fy_sel}")
-    
-
-    tab_bm, tab_yoy, tab_audit = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Audit Areas"])
+        
+    tab_bm, tab_yoy, tab_audit, tab_wp, tab_obs = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Audit Areas",
+        "4.Audit Work Program", "5.Observations - Summary"
+    ])
 
     # -------------------------------------------------------------------------
     # TAB 1 — Benchmarking (Selected FY)
@@ -1087,7 +1424,7 @@ def main():
 
     
     # -------------------------------------------------------------------------
-    # TAB 3 — Suggested Audit Areas (Top 5)
+    # TAB 3 — Suggested Audit Areas (Top 3)
     # -------------------------------------------------------------------------
     with tab_audit: 
         st.subheader("Suggested Audit Areas")
@@ -1141,6 +1478,7 @@ def main():
 
         # --- 3. UI AND GENERATION ---
         model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+        audit_df = load_audit_db()
         generate = st.button("Generate Audit Suggestions", type="primary")
 
         if generate:
@@ -1150,7 +1488,7 @@ def main():
                 # This uses the helpers we discussed to pick the 5 best examples
                 system_prompt, user_prompt = _build_audit_prompt(
                     company, exch, ind, str(fy_sel), 
-                    all_metrics_to_rank, mtype_df, max_types=5
+                    all_metrics_to_rank, mtype_df, max_types=3
                 )
                 
                 api_key_for_call = _get_openai_api_key()
@@ -1166,6 +1504,21 @@ def main():
                         st.success("Audit suggestions generated!")
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text
+                        
+                        work_json = None
+                        try:
+                            # If model ever wraps in ```json ... ```, strip fences defensively
+                            j = text.strip()
+                            if j.startswith("```"):
+                                j = j.strip("`")
+                                j = j[j.find("{") : j.rfind("}")+1]
+                            work_json = json.loads(j)
+                        except Exception as e:
+                            st.error(f"Could not parse JSON from model: {e}")
+                        if work_json:
+                            st.success("Audit suggestions generated and parsed.")
+                            st.session_state["ai_work_program"] = work_json
+                            
                     else:
                         st.warning(
                             "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
@@ -1173,6 +1526,221 @@ def main():
                         )
                         with st.expander("Debug info"):
                             st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
+
+    # -------------------------------------------------------------------------
+    # TAB 4 — Audit Work Program
+    # -------------------------------------------------------------------------
+
+# ==============================
+# TAB 4 — Audit Work Program
+# ==============================
+    with tab_wp:
+        st.subheader("Audit Work Program — AI-Assisted Audit Testing")
+
+        audit_df = load_audit_db()
+        scopes, subs_by_scope = audit_vocab(audit_df)
+
+        # ---- Defaults from any AI mapping (or from raw AI suggestions), else fallback ----
+        def _defaults_from_session():
+            # Prefer precise mapping outcome if present
+            maps = st.session_state.get("ai_mappings")
+            if maps and isinstance(maps, list) and len(maps) > 0:
+                m0 = maps[0]
+                s0 = m0.get("mapped_scope")
+                sp0 = m0.get("mapped_sub_process")
+                if s0 in scopes and sp0 in subs_by_scope.get(s0, []):
+                    return s0, sp0
+            # Fallback to AI work_program (free text) best-effort exact match
+            ai = st.session_state.get("ai_work_program", {})
+            areas = (ai or {}).get("work_program", {}).get("top_areas", [])
+            if areas:
+                s1 = str(areas[0].get("scope_name", "")).strip()
+                sp1 = str(areas[0].get("sub_process_name", "")).strip()
+                if s1 in scopes and sp1 in subs_by_scope.get(s1, []):
+                    return s1, sp1
+            # Final fallback: first scope/sub
+            s = scopes[0] if scopes else ""
+            sp = subs_by_scope.get(s, [""])[0] if s else ""
+            return s, sp
+
+        d_scope, d_sub = _defaults_from_session()
+
+        sel_scope = st.selectbox("1) Scope", scopes, index=(scopes.index(d_scope) if d_scope in scopes else 0), key="wp_scope")
+        sel_sub = st.selectbox(
+            "2) Sub-process",
+            subs_by_scope.get(sel_scope, []),
+            index=(subs_by_scope[sel_scope].index(d_sub) if sel_scope in subs_by_scope and d_sub in subs_by_scope[sel_scope] else 0),
+            key="wp_subproc"
+        )
+
+        # ---- Retrieve matched row from master and show Risk/Control ----
+        row = audit_df[(audit_df["Scope"] == sel_scope) & (audit_df["Sub-process"] == sel_sub)]
+        if row.empty:
+            st.error("No work program row found for this selection.")
+            st.stop()
+        rec = row.iloc[0]
+
+        st.markdown("**Risk**")
+        st.info(rec["Risk"])
+        st.markdown("**Control Description**")
+        st.info(rec["Control Description"])
+
+        # ---- Build uploaders from Documents required ----
+        st.markdown("**Documents required**")
+        doc_items = [d.strip("-• ").strip() for d in str(rec["Documents required"]).splitlines() if str(d).strip()]
+        uploaded = {}
+        for i, lab in enumerate(doc_items):
+            uploaded[lab] = st.file_uploader(f"Upload: {lab}", type=None, accept_multiple_files=False, key=f"doc_{sel_scope}_{sel_sub}_{i}")
+
+        st.markdown("---")
+
+        # ---- OpenAI Draft Runner: open files, extract excerpts, evaluate vs test steps ----
+        submit_wp = st.button("Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}")
+
+        if submit_wp:
+            # 1) Save + parse files
+            os.makedirs("uploads", exist_ok=True)
+            saved = []
+            parsed_docs = []
+            for label, file in uploaded.items():
+                if file is not None:
+                    safe_name = f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}".replace(" ", "_")
+                    path = os.path.join("uploads", safe_name)
+                    with open(path, "wb") as f:
+                        f.write(file.getbuffer())
+                    text, meta = extract_text_from_upload(file)
+                    meta["label"] = label
+                    parsed_docs.append({"text": text, "meta": meta})
+                    saved.append({"label": label, "path": path, "original_name": file.name, "type": meta.get("type", "")})
+
+            # 2) Build concise evidence pack
+            evidence = build_relevant_excerpts(rec["Audit Test Steps"], parsed_docs)
+            ev_lines = []
+            for j, ev in enumerate(evidence, start=1):
+                fname = ev["name"]
+                ev_lines.append(f"[snippet {j}] file={fname} · score={ev['score']:.2f}\n{ev['excerpt']}\n")
+            evidence_block = "\n".join(ev_lines) if ev_lines else "(no snippets extracted)"
+
+            # 3) Call OpenAI (reuses your existing helpers and model setting)
+            model = os.environ.get("OPENAI_MODEL", st.session_state.get("audit_model", "gpt-5"))
+            api_key = _get_openai_api_key()
+            if not api_key:
+                st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+                st.stop()
+
+            system_prompt = (
+                "You are an experienced internal auditor. You will be given:\n"
+                "1) Company context (scope, sub-process, risk, control);\n"
+                "2) Audit Test Steps; and\n"
+                "3) Evidence excerpts extracted from uploaded documents.\n\n"
+                "Task:\n"
+                "- Evaluate the evidence against each audit step.\n"
+                "- Identify potential observations (exceptions, control gaps, anomalies or missing evidence).\n"
+                "- Classify severity (High / Medium / Low).\n"
+                "- Propose a concise root cause and recommendation.\n"
+                "- Where applicable, cite the evidence by file name and “snippet#”.\n\n"
+                "Return ONLY valid JSON of the shape:\n"
+                "{\n"
+                "  \"observations\": [\n"
+                "    {\"observation\":\"...\", \"severity\":\"High|Medium|Low\", \"root_cause\":\"...\", \"recommendation\":\"...\", \"evidence_refs\":[{\"file\":\"...\",\"snippet_id\":1}]}\n"
+                "  ]\n"
+                "}\n"
+                "If there are no issues, return {\"observations\": []}."
+            )
+
+            user_prompt = (
+                f"Company: {company}\n"
+                f"Scope: {sel_scope}\n"
+                f"Sub-process: {sel_sub}\n\n"
+                f"Risk:\n{rec['Risk']}\n\n"
+                f"Control Description:\n{rec['Control Description']}\n\n"
+                f"Audit Test Steps:\n{rec['Audit Test Steps']}\n\n"
+                f"Evidence Excerpts (top-ranked):\n{evidence_block}\n\n"
+                "Draft observations (if any). Use only the JSON schema specified."
+            )
+
+            with st.spinner("Calling OpenAI to analyze evidence and draft observations..."):
+                text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=1200)
+
+            # 4) Parse JSON, store for Tab 5
+            observations = []
+            if err:
+                st.error(f"OpenAI call failed: {err}")
+            else:
+                try:
+                    payload = text.strip()
+                    if payload.startswith("```"):
+                        payload = payload.strip("`")
+                        payload = payload[payload.find("{"): payload.rfind("}")+1]
+                    out = json.loads(payload)
+                    observations = out.get("observations", [])
+                    if not isinstance(observations, list):
+                        observations = []
+                except Exception as e:
+                    st.warning(f"Could not parse model JSON: {e}")
+                    observations = []
+
+            if observations:
+                st.success("Observations drafted.")
+                if "audit_observations" not in st.session_state:
+                    st.session_state["audit_observations"] = []
+                # Map snippet_id -> original file short name; then to saved path
+                snippet_to_file = {}
+                for j, ev in enumerate(evidence, start=1):
+                    snippet_to_file[j] = ev["name"]
+
+                enriched = []
+                for o in observations:
+                    refs = o.get("evidence_refs", []) or []
+                    files_from_refs = []
+                    for r in refs:
+                        sn = int(r.get("snippet_id", 0))
+                        fname = snippet_to_file.get(sn)
+                        if fname:
+                            match = next((s for s in saved if s["original_name"] == fname), None)
+                            files_from_refs.append(match["path"] if match else fname)
+                    if not files_from_refs:
+                        files_from_refs = [s["path"] for s in saved]  # fallback
+
+                    enriched.append({
+                        "company": company, "exchange": exch, "industry": ind, "fy": str(fy_sel),
+                        "scope": sel_scope, "sub_process": sel_sub,
+                        "observation": o.get("observation", ""),
+                        "severity": o.get("severity", ""),
+                        "root_cause": o.get("root_cause", ""),
+                        "recommendation": o.get("recommendation", ""),
+                        "evidence_links": files_from_refs,
+                    })
+                st.session_state["audit_observations"].extend(enriched)
+            else:
+                st.info("No issues drafted by the model; consider adding more evidence or refining steps.")
+
+
+    # -------------------------------------------------------------------------
+    # TAB 5 — Observations
+    # -------------------------------------------------------------------------
+
+    with tab_obs:
+        st.subheader("Audit Observations")
+        obs = st.session_state.get("audit_observations", [])
+        if not obs:
+            st.info("No observations yet. Run a work program in Tab 4.")
+        else:
+            df_obs = pd.DataFrame(obs)
+            st.dataframe(df_obs, use_container_width=True)
+
+            # Export options (CSV / Excel)
+            csv = df_obs.to_csv(index=False).encode("utf-8")
+            st.download_button("Download CSV", data=csv, file_name="audit_observations.csv", mime="text/csv")
+
+            # Excel export
+            from io import BytesIO
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="openpyxl") as xw:
+                df_obs.to_excel(xw, index=False, sheet_name="Observations")
+            st.download_button("Download Excel", data=bio.getvalue(), file_name="audit_observations.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
 # =============================================================================
 # Entrypoint
