@@ -1574,9 +1574,8 @@ def main():
                             "or lowering `max_tokens` to stay within the model’s context window."
                         )
 
-        with st.expander("Debug info"):
-            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
-
+                with st.expander("Debug info"):
+                    st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
 
     # -------------------------------------------------------------------------
     # TAB 4 — Audit Work Program
