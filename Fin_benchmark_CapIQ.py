@@ -13,6 +13,7 @@ import streamlit as st
 import json
 import io
 import re
+import shutil
 from io import BytesIO
 from difflib import SequenceMatcher
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
@@ -269,11 +270,6 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE_CHARS) -> list[str]:
     return chunks
 
 def extract_text_from_upload(uploaded_file) -> tuple[str, dict]:
-    """
-    Return (text, meta). meta contains basic info for referencing.
-    Supported: PDF, DOCX, XLSX/XLS, CSV, TXT.
-    """
-    import pandas as pd
     name = getattr(uploaded_file, "name", "file")
     meta = {"name": name, "size": getattr(uploaded_file, "size", None), "type": ""}
     raw = uploaded_file.read()
@@ -321,7 +317,6 @@ def extract_text_from_upload(uploaded_file) -> tuple[str, dict]:
             text = "\n\n".join(parts)
         elif lower.endswith(".csv"):
             meta["type"] = "csv"
-            import pandas as pd
             df = pd.read_csv(io.BytesIO(raw))
             if not df.empty:
                 text = df.head(50).to_csv(index=False)
@@ -1108,6 +1103,72 @@ def _convert_suggestions_to_json(readable_text: str, model: str = None) -> dict:
 # =============================================================================
 # Utility (numeric validation)
 # =============================================================================
+
+def _reset_app_state(full_cache_reset: bool = False):
+    # 1) Clear known keys from this app
+    keys_to_clear = [
+        # Autofill scaffolding
+        "_autofill_company", "_autofill_fy", "_autofill_exchange",
+
+        # Sidebar inputs
+        "company_name_input", "current_assets", "current_liabilities", "inventory",
+        "operating_cf", "capex", "revenue", "ebitda", "cost_of_revenue",
+
+        # Selection + data snapshots
+        "selection", "pct_wide", "pct_tidy",
+        "company_name", "exchange", "industry", "fy",
+        "mtype_bm", "mtype_yoy",
+
+        # Tab 1 analysis
+        "fin_analysis_text", "fin_analysis_pdf_bytes",
+
+        # (If you added charts export later)
+        "bm_figs", "bm_figs_key",
+
+        # Tab 3 suggestions
+        "ai_audit_suggestions", "ai_audit_suggestions_pdf_bytes",
+        "ai_work_program", "ai_mappings",
+
+        # Tab 5 observations
+        "audit_observations",
+    ]
+
+    for k in keys_to_clear:
+        st.session_state.pop(k, None)
+
+    # 2) Clear any dynamic keys created by file uploaders and chart PDF cache
+    #    (uploaders in Tab 4 use keys like "doc_<scope>_<sub>_<i>")
+    for k in list(st.session_state.keys()):
+        if k.startswith("doc_") or k.startswith("bm_charts_pdf_bytes"):
+            st.session_state.pop(k, None)
+
+    # 3) Remove temp uploads folder (created in Tab 4)
+    try:
+        shutil.rmtree("uploads", ignore_errors=True)
+    except Exception:
+        pass
+
+    # 4) Clear Tab 1 analysis via your existing helper (if present)
+    try:
+        _clear_tab1_analysis()
+    except Exception:
+        pass
+
+    # 5) Optionally clear cached data (expensive; forces reload of Excel, etc.)
+    if full_cache_reset:
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+
+    # 6) Rerun the app to show a pristine UI
+    try:
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
+
+
 def _is_number_str(x: Optional[str]) -> bool:
     try:
         sx = "" if x is None else str(x).strip()
@@ -1284,6 +1345,14 @@ def main():
     pct_wide, pct_tidy = compute_percentiles(data_df, metric_cols)
 
     # --- Sidebar: Always-visible Company Input (with auto-population) ---
+    
+    st.sidebar.button(
+        "↻ Refresh / Clear All",
+        type="secondary",
+        use_container_width=True,
+        on_click=lambda: _reset_app_state(full_cache_reset=True)
+    )
+
     st.sidebar.header("Company Input")
     
     # Exchange list (for initial default)
@@ -1391,7 +1460,7 @@ def main():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.2 | 2026")
+    st.sidebar.caption("version 3.3 | 2026")
 
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
@@ -2008,7 +2077,6 @@ def main():
             st.download_button("Download CSV", data=csv, file_name="audit_observations.csv", mime="text/csv")
 
             # Excel export
-            from io import BytesIO
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine="openpyxl") as xw:
                 df_obs.to_excel(xw, index=False, sheet_name="Observations")
