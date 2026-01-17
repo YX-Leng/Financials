@@ -563,7 +563,7 @@ def _call_openai(system_prompt: str,
 
     try:
         client = OpenAI(api_key=key)
-        mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-4o").strip()
+        mdl = (model or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
     except Exception as e:
         return "", f"Failed to initialize OpenAI client: {e}"
 
@@ -1097,8 +1097,8 @@ def main():
             )
 
 
-        with st.expander("Generate with GPT‑5", expanded=True):
-            model = st.text_input("Model (Audit)", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
+        with st.expander("Generate Auditable Areas", expanded=True):
+            model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
             generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
             if generate:
                 system_prompt, user_prompt = _build_audit_prompt(
@@ -1109,7 +1109,7 @@ def main():
                     st.error("OpenAI API key is missing. Please set it in your environment or Streamlit secrets.")
                 else:
                     with st.spinner("Calling OpenAI and generating suggestions..."):
-                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=300)
+                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
 
 # =============================================================================
 # Entrypoint
