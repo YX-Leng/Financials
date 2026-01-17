@@ -20,7 +20,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-
+from reportlab.platypus import Image as RLImage, PageBreak  
+from reportlab.lib.utils import ImageReader
+import plotly.io as pio
 
 # =============================================================================
 # Self-launching Streamlit bootstrap
@@ -567,6 +569,104 @@ def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
     doc.build(elements)
     return buf.getvalue()
 
+
+def analysis_and_charts_to_pdf_bytes(
+    analysis_md_text: str,
+    figs: list[tuple[str, str, "go.Figure"]],
+    title: str = "",
+    subtitle: str = "",
+    skipped: list[str] | None = None,
+) -> bytes:
+   
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        title=title or "Analysis & Benchmarking",
+        author="Industry Benchmark Analysis Dashboard",
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    body = styles["BodyText"]
+    h2 = styles["Heading2"]
+    h3 = styles["Heading3"]
+
+    elements = []
+    if title:
+        elements.append(Paragraph(title, h2))
+    if subtitle:
+        elements.append(Paragraph(subtitle, body))
+        elements.append(Spacer(1, 6))
+
+    # --- Analysis section (Markdown -> flowables) ---
+    if analysis_md_text and analysis_md_text.strip():
+        elements.append(Paragraph("Financial Metrics – Analysis", h3))
+
+        bullets_acc = []
+        def flush_bullets():
+            nonlocal bullets_acc, elements
+            if bullets_acc:
+                items = [ListItem(Paragraph(b, body)) for b in bullets_acc]
+                elements.append(ListFlowable(items, bulletType="bullet", start="•"))
+                elements.append(Spacer(1, 6))
+                bullets_acc = []
+
+        for raw in (analysis_md_text or "").splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                flush_bullets()
+                elements.append(Spacer(1, 6))
+                continue
+            if line.startswith("### "):
+                flush_bullets()
+                elements.append(Paragraph(line[4:].strip(), h3))
+                continue
+            if line.startswith("## ") or line.startswith("# "):
+                flush_bullets()
+                elements.append(Paragraph(line.lstrip("# ").strip(), h3))
+                continue
+            if line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
+                bullets_acc.append(line.lstrip()[2:].strip())
+                continue
+            htmlish = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
+            elements.append(Paragraph(htmlish, body))
+        flush_bullets()
+
+    # --- Charts section ---
+    if figs:
+        elements.append(PageBreak())
+        elements.append(Paragraph("Benchmarking Charts", h3))
+        elements.append(Spacer(1, 6))
+
+        max_w = A4[0] - (16 + 16) * mm  # page width minus margins
+        for i, (metric_name, bucket, fig) in enumerate(figs, start=1):
+            try:
+                img_bytes = fig.to_image(format="png", scale=2)  # needs 'kaleido'
+            except Exception as e:
+                raise RuntimeError(
+                    "Plotly static export failed. Please install 'kaleido' "
+                    "(e.g., `pip install -U kaleido`) and rerun."
+                ) from e
+
+            ir = ImageReader(BytesIO(img_bytes))
+            iw, ih = ir.getSize()
+            scale = float(max_w) / float(iw)
+            elements.append(Paragraph(f"{i}. {metric_name} — <b>{bucket}</b>", body))
+            elements.append(RLImage(BytesIO(img_bytes), width=max_w, height=ih * scale))
+            elements.append(Spacer(1, 8))
+
+    if skipped:
+        elements.append(Spacer(1, 12))
+        elements.append(Paragraph("Skipped metrics", h3))
+        elements.append(Paragraph(", ".join(skipped), body))
+
+    doc.build(elements)
+    return buf.getvalue()
+
 # =============================================================================
 # Visuals
 # =============================================================================
@@ -1105,8 +1205,7 @@ def _convert_suggestions_to_json(readable_text: str, model: str = None) -> dict:
 # =============================================================================
 
 def _reset_app_state(full_cache_reset: bool = False):
-    st.session_state["company_name_input"] = ""
-    
+
     # 1) Clear known keys from this app
     keys_to_clear = [
         # Autofill scaffolding
@@ -1535,6 +1634,7 @@ def main():
         grid = st.columns(2)
         assembled_for_llm = []
         skipped_bm = []
+        bm_figs = []
 
         for i, (_, rec) in enumerate(subset.iterrows()):
             m_col   = str(rec["Metrics_Col"]).strip()
@@ -1549,9 +1649,9 @@ def main():
                 p50 = pd.to_numeric(p_row[(m_col, "p50")], errors="coerce")
                 p75 = pd.to_numeric(p_row[(m_col, "p75")], errors="coerce")
 
-            # Skip if nothing to show
-            if (pd.isna(val)) and pd.isna(p25) and pd.isna(p50) and pd.isna(p75):
-                # skipped_bm.append(m_name)  # uncomment if you want to track skipped
+            # Skip if nothing to show 
+            if (pd.isna(val) and pd.isna(p25) and pd.isna(p50) and pd.isna(p75)):
+                skipped_bm.append(m_name)
                 continue
 
             bucket = _classify_bucket(val, p25, p50, p75, m_grade)
@@ -1568,9 +1668,11 @@ def main():
                         band_thickness=0.16
                     )
                     st.plotly_chart(fig, use_container_width=True, key=f"bm_{m_col}")
-
                     _fmt = lambda x: "NA" if pd.isna(x) else f"{x:.4g}"
                     st.caption(f"Company={_fmt(val)} · p25={_fmt(p25)} · p50={_fmt(p50)} · p75={_fmt(p75)}")
+                    
+                    # Keep figure for PDF bundling
+                    bm_figs.append((m_name, bucket, fig))
 
             # keep your LLM assembly
             assembled_for_llm.append({
@@ -1587,7 +1689,8 @@ def main():
         if skipped_bm:
             with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
                 st.write(", ".join(skipped_bm))
-
+        ss["bm_figs"] = bm_figs
+        
         st.divider()
         st.subheader("Financial Metrics - Analysis")
 
@@ -1630,20 +1733,39 @@ def main():
             st.markdown(text)
 
             # Generate & cache PDF bytes (optional caching)
-            if "fin_analysis_pdf_bytes" not in st.session_state:
-                st.session_state["fin_analysis_pdf_bytes"] = md_to_pdf_bytes(
-                    text,
-                    title=f"{company} – Financial Analysis ({fy_sel})",
-                    author="Auto-generated by the dashboard"
-                )
 
-            st.download_button(
-                "Download analysis (.pdf)",
-                data=st.session_state["fin_analysis_pdf_bytes"],
-                file_name="financial_analysis.pdf",
-                mime="application/pdf",
-                key="dl_fin_analysis_pdf"
-            )
+            if st.session_state.get("fin_analysis_text") and st.session_state.get("bm_figs"):
+                text = st.session_state["fin_analysis_text"]
+                figs = st.session_state["bm_figs"]
+
+                # a cache key that changes when inputs change
+                combo_key = f"{company}|{exch}|{ind}|{fy_sel}|{mtype}|{len(figs)}|{hash(text)}"
+                if ss.get("bm_fin_combo_key") != combo_key:
+                    ss.pop("bm_fin_combo_pdf_bytes", None)
+                    ss["bm_fin_combo_key"] = combo_key
+
+                if "bm_fin_combo_pdf_bytes" not in ss:
+                    try:
+                        ss["bm_fin_combo_pdf_bytes"] = analysis_and_charts_to_pdf_bytes(
+                            analysis_md_text=text,
+                            figs=figs,
+                            title=f"{company} — Analysis & Benchmarking ({fy_sel})",
+                            subtitle=f"{exch} · {ind}",
+                            skipped=skipped_bm,  # from earlier in Tab 1
+                        )
+                    except RuntimeError as e:
+                        st.info(str(e))
+                        ss.pop("bm_fin_combo_pdf_bytes", None)
+
+                if "bm_fin_combo_pdf_bytes" in ss:
+                    st.download_button(
+                        "Download analysis + charts (.pdf)",
+                        data=ss["bm_fin_combo_pdf_bytes"],
+                        file_name="analysis_and_benchmarking.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="dl_fin_plus_charts_pdf",
+                    )
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
