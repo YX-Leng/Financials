@@ -1161,14 +1161,6 @@ def _reset_app_state(full_cache_reset: bool = False):
         except Exception:
             pass
 
-    # 6) Rerun the app to show a pristine UI
-    try:
-        st.rerun()
-    except AttributeError:
-        st.experimental_rerun()
-
-
-
 def _is_number_str(x: Optional[str]) -> bool:
     try:
         sx = "" if x is None else str(x).strip()
