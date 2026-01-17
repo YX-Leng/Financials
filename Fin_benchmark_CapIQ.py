@@ -1685,6 +1685,7 @@ def main():
                 "p75_str": ("NA" if pd.isna(p75) else f"{p75:.4g}"),
                 "bucket": bucket,
             })
+        st.caption(f"DEBUG · charts collected: {len(bm_figs)}")
 
         if skipped_bm:
             with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
@@ -1694,8 +1695,6 @@ def main():
         st.divider()
         st.subheader("Financial Metrics - Analysis")
 
-        # Either reuse Tab 3's model via session, or keep a unique input here:
-        # Option 1 (reuse): fin_model = st.session_state.get("audit_model", os.environ.get("OPENAI_MODEL", "gpt-5"))
         fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
 
         currency_label = ccy if 'ccy' in locals() else ""
@@ -1733,7 +1732,6 @@ def main():
             st.markdown(text)
 
             # Generate & cache PDF bytes (optional caching)
-
             if st.session_state.get("fin_analysis_text") and st.session_state.get("bm_figs"):
                 text = st.session_state["fin_analysis_text"]
                 figs = st.session_state["bm_figs"]
@@ -1894,7 +1892,7 @@ def main():
                 if not api_key_for_call:
                     st.error("OpenAI API key is missing.")
                 else:
-                    with st.spinner("Calling OpenAI and analyzing risk areas..."):
+                    with st.spinner("Calling model and analyzing risk areas..."):
                         text, err = _call_openai(
                             system_prompt, user_prompt,
                             api_key=api_key_for_call, model=model, max_tokens=800
@@ -2118,7 +2116,7 @@ def main():
                 "Draft observations (if any). Use only the JSON schema specified."
             )
 
-            with st.spinner("Calling OpenAI to analyze evidence and draft observations..."):
+            with st.spinner("Calling model to analyze evidence and draft observations..."):
                 text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=1200)
 
             # 4) Parse JSON, store for Tab 5
