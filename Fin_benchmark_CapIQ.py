@@ -915,8 +915,8 @@ def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: s
 
     system = (
         "You are an experienced financial analyst. Write a concise, management-ready financial analysis. "
-        "Use clear, non-technical language, no jargon. Prioritize insights on financial analysis and internal controls. "
-        "Separate facts from interpretation. Prioritize areas with high risk or anomalies. Do not provide investment advice."
+        "Use clear, non-technical language, no jargon. Prioritize insights on fraud detection, financial analysis, and internal controls. "
+        "Prioritize areas with high risk or anomalies. Do not provide investment advice."
     )
 
     # Compact table-like lines for the model
@@ -937,9 +937,10 @@ def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: s
         "\n".join(lines) +
         "\n\nWrite:\n"
         "1) Executive summary (3-5 bullets).\n"
-        "2) Key strengths and pressure points (tie explicitly to metrics and buckets: Healthy / Satisfactory / Needs Improvement).\n"
+        "2) Key strengths (tie explicitly to metrics and buckets: Healthy).\n"
+        "3) Key pressure points (tie explicitly to metrics and buckets: Needs Improvement / Satisfactory).\n"
         "4) Assumptions/limitations (missing or NA values).\n"
-        "Avoid acronyms unless already present in metric names. Keep to ~250-350 words."
+        "Avoid acronyms unless already present in metric names. Keep to ~250-350 words. Bold all subheadings."
     )
     return system, user
 
