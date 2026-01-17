@@ -1096,8 +1096,6 @@ def main():
                 }
             )
 
-
-        with st.expander("Generate Auditable Areas", expanded=True):
             model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
             generate = st.button("Generate Audit Suggestions", type="primary", key="gen_audit_btn")
             if generate:
@@ -1126,6 +1124,10 @@ def main():
                         st.markdown("##### Suggested Auditable Areas")
                         st.markdown(render)
                         st.session_state["ai_audit_suggestions"] = text
+
+    # --- Footer ---
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+    st.sidebar.caption("version 3.0 | 2026")
 
 # =============================================================================
 # Entrypoint
