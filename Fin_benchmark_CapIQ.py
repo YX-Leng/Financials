@@ -1886,15 +1886,14 @@ def main():
     with tab_wp:
         st.subheader("Audit Work Program — AI-Assisted Audit Testing")
 
-
-    # Gate: do not show info until Tab 3 has generated content
-    has_suggestions = bool(st.session_state.get("ai_audit_suggestions"))
-    if not has_suggestions:
-        st.info("No suggested audit areas yet. Generate suggested audit areas in Tab 3.")
-    else:
-        # Load the full master (no dependency on Tab 3)
-        audit_df = load_audit_db()
-        scopes, subs_by_scope = audit_vocab(audit_df)
+        # Gate: do not show info until Tab 3 has generated content
+        has_suggestions = bool(st.session_state.get("ai_audit_suggestions"))
+        if not has_suggestions:
+            st.info("No suggested audit areas yet. Generate suggested audit areas in Tab 3.")
+        else:
+            # Load the full master (no dependency on Tab 3)
+            audit_df = load_audit_db()
+            scopes, subs_by_scope = audit_vocab(audit_df)
 
         # Guard: no scopes available
         if not scopes:
