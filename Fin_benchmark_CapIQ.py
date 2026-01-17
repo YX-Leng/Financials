@@ -12,8 +12,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import json
 import io
-import BytesIO
 import re
+from io import BytesIO
 from difflib import SequenceMatcher
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
