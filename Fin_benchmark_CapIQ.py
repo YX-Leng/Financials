@@ -905,6 +905,40 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
     return worst_per_type
 
+# --- Financial analysis prompt builder ---
+def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: str,
+                                     metrics_rows: list[dict], currency: str = "") -> tuple[str, str]:
+
+    system = (
+        "You are an experienced financial analyst. Write a concise, management-ready financial analysis. "
+        "Use clear, non-technical language, no jargon. Prioritize insights on financial analysis and internal controls. "
+        "Separate facts from interpretation. Prioritize areas with high risk or anomalies. Do not provide investment advice."
+    )
+
+    # Compact table-like lines for the model
+    lines = []
+    for r in metrics_rows:
+        name = r.get("Metrics_Name") or r.get("Metrics_Name")  # tolerate key shape
+        val  = r.get("value_str", "NA")
+        p25  = r.get("p25_str", "NA")
+        p50  = r.get("p50_str", "NA")
+        p75  = r.get("p75_str", "NA")
+        grade= r.get("Metrics_Grade", "")
+        bucket = r.get("bucket", "")
+        lines.append(f"- {name}: value={val} {currency} | p25={p25} | p50={p50} | p75={p75} | grade={grade} | bucket={bucket}")
+
+    user = (
+        f"Company: {company}\nExchange: {exchange}\nIndustry: {industry}\nFY: {fy}\nCurrency: {currency}\n\n"
+        "Metrics (company vs industry percentiles):\n" +
+        "\n".join(lines) +
+        "\n\nWrite:\n"
+        "1) Executive summary (3-5 bullets).\n"
+        "2) Key strengths and pressure points (tie explicitly to metrics and buckets: Healthy / Satisfactory / Needs Improvement).\n"
+        "4) Assumptions/limitations (missing or NA values).\n"
+        "Avoid acronyms unless already present in metric names. Keep to ~250-350 words."
+    )
+    return system, user
+
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
                                        max_types=3, counts_only=False):
@@ -1412,6 +1446,56 @@ def main():
             if skipped_bm:
                 with st.expander("Skipped metrics (not available for this FY / industry / company)", expanded=False):
                     st.write(", ".join(skipped_bm))
+
+            # Generate Analysis section
+            st.divider()
+            st.subheader("Financial Metrics - Analysis")
+
+            # Reuse model selection pattern from Tab 3 for consistency
+            fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="fin_model")
+
+            # Currency by exchange already computed as `ccy` in the sidebar; reuse it here if in scope
+            currency_label = ccy if 'ccy' in locals() else ""
+
+            btn_fin = st.button(
+                "Generate Analysis",
+                type="primary",
+                key="btn_fin_analysis",
+                disabled=(len(assembled_for_llm) == 0)
+            )
+
+            if btn_fin:
+                api_key_fin = _get_openai_api_key()
+                if not api_key_fin:
+                    st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+                else:
+                    # Build prompt from whatever metrics are shown under the selected Type
+                    sys_p, usr_p = _build_fin_analysis_prompt(
+                        company=company, exchange=exch, industry=ind, fy=str(fy_sel),
+                        metrics_rows=assembled_for_llm, currency=currency_label
+                    )
+                    with st.spinner("Calling model and drafting financial analysis..."):
+                        fin_text, fin_err = _call_openai(
+                            sys_p, usr_p, api_key=api_key_fin, model=fin_model, max_tokens=900
+                        )
+                    if fin_err:
+                        st.error(f"API Error: {fin_err}")
+                    elif fin_text:
+                        st.session_state["fin_analysis_text"] = fin_text.strip()
+                        st.success("Financial analysis generated.")
+                    else:
+                        st.warning("No output received from the model. Try a smaller prompt or different model.")
+
+            # Show (and allow download of) the latest analysis, if any
+            if st.session_state.get("fin_analysis_text"):
+                st.markdown(st.session_state["fin_analysis_text"])
+                st.download_button(
+                    "Download analysis (.md)",
+                    data=st.session_state["fin_analysis_text"].encode("utf-8"),
+                    file_name="financial_analysis.md",
+                    mime="text/markdown",
+                    key="dl_fin_analysis_md"
+    )
 
     # -------------------------------------------------------------------------
     # TAB 2 — YoY Trend
