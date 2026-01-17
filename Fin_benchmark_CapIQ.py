@@ -687,10 +687,10 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
-                                       max_types=5, counts_only=False):
+                                       max_types=3, counts_only=False):
     system = (
         "You are an experienced internal auditor. Your expertise includes fraud detection, financial analysis, and internal controls. "
-        "Given company data and industry benchmarks, identify the top 5 control areas for internal audit focus. "
+        "Given company data and industry benchmarks, identify the top 3 control areas for internal audit focus. "
         "Prioritize areas with high risk or anomalies. Avoid external audit or generic compliance steps."
         "Do not use acronyms or abbreviations in your response. Always write out the full term."
     )
@@ -711,7 +711,14 @@ def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
             f"(value={r['value_str']}; grade={r['Metrics_Grade']}; bucket={r['bucket']})"
         )
 
-    user = header + "\n".join(lines)
+    user = (
+            "Suggest internal control areas for audit based on potential anomalies you infer from common risk patterns in this industry. "
+            "For each area, include:\n"
+            "1. Risk rationale.\n"
+            "2. Suggested audit procedures (exceptions/fraud focus).\n"
+            "3. Data required (source systems and fields).\n"
+            "State assumptions if data is missing."
+        )
     return system, user
 
 # =============================================================================
@@ -1102,7 +1109,7 @@ def main():
                 })
 
         # --- 3. UI AND GENERATION ---
-        model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-4o"), key="audit_model")
+        model = st.text_input("Input Model :", os.environ.get("OPENAI_MODEL", "gpt-5"), key="audit_model")
         generate = st.button("Generate Audit Suggestions", type="primary")
 
         if generate:
@@ -1112,7 +1119,7 @@ def main():
                 # This uses the helpers we discussed to pick the 5 best examples
                 system_prompt, user_prompt = _build_audit_prompt(
                     company, exch, ind, str(fy_sel), 
-                    all_metrics_to_rank, mtype_df, max_types=5
+                    all_metrics_to_rank, mtype_df, max_types=3
                 )
                 
                 api_key_for_call = _get_openai_api_key()
@@ -1120,7 +1127,7 @@ def main():
                     st.error("OpenAI API key is missing.")
                 else:
                     with st.spinner("Analyzing risk areas..."):
-                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=800)
+                        text, err = _call_openai(system_prompt, user_prompt, model=model, max_tokens=600)
 
                     if err:
                         st.error(f"API Error: {err}")
@@ -1129,7 +1136,12 @@ def main():
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text
                     else:
-                        st.warning("The model returned an empty response.")
+                        st.warning(
+                            "No suggestions generated. Try switching to `gpt-4o`, reducing the prompt length, "
+                            "or lowering `max_tokens` to stay within the model’s context window."
+                        )
+                        with st.expander("Debug info"):
+                            st.code(f"MODEL: {model}\n\nSYSTEM PROMPT:\n{system_prompt}\n\nUSER PROMPT:\n{user_prompt}")
 
 # =============================================================================
 # Entrypoint
