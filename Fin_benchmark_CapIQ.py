@@ -506,154 +506,154 @@ def _clear_tab1_analysis():
 
 # Convert simple Markdown text to PDF bytes 
 
-    def md_to_pdf_bytes(
-        md_text: str,
-        title: str = "",
-        author: str = "",
-        subheaders: Optional[Dict[str, str]] = None,   # {"Company": "...", "Exchange": "...", "Industry": "...", "FY": "..."}
-    ) -> bytes:
+def md_to_pdf_bytes(
+    md_text: str,
+    title: str = "",
+    author: str = "",
+    subheaders: Optional[Dict[str, str]] = None,   # {"Company": "...", "Exchange": "...", "Industry": "...", "FY": "..."}
+) -> bytes:
 
-        subheaders = subheaders or {}
+     subheaders = subheaders or {}
 
-        # --- Sanitize text: remove non-printable/control chars that sometimes sneak in as ''
-        def _sanitize(s: str) -> str:
-            if not s:
-                return ""
-            # Keep common whitespace + printable; drop control chars except \n and \t
-            return re.sub(r"[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]", " ", str(s))
+    # --- Sanitize text: remove non-printable/control chars that sometimes sneak in as ''
+    def _sanitize(s: str) -> str:
+        if not s:
+            return ""
+        # Keep common whitespace + printable; drop control chars except \n and \t
+        return re.sub(r"[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]", " ", str(s))
 
-        md_text = _sanitize(md_text)
-        clean_sub = { _sanitize(k): _sanitize(v) for k, v in subheaders.items() if k and v }
+    md_text = _sanitize(md_text)
+    clean_sub = { _sanitize(k): _sanitize(v) for k, v in subheaders.items() if k and v }
 
-        # --- Layout constants
-        PAGE_W, PAGE_H = A4
-        # Header block we draw above the story frame:
-        HEADER_H = 24 * mm     # header band height (title + subheaders + divider)
-        BODY_TOP_PAD = 6 * mm  # cushion between header divider and first body line
+    # --- Layout constants
+    PAGE_W, PAGE_H = A4
+    # Header block we draw above the story frame:
+    HEADER_H = 24 * mm     # header band height (title + subheaders + divider)
+    BODY_TOP_PAD = 6 * mm  # cushion between header divider and first body line
 
-        # The story's top margin is header space + cushion + some normal top margin
-        buf = BytesIO()
-        doc = SimpleDocTemplate(
-            buf,
-            pagesize=A4,
-            title=title or "Report",
-            author=author or "",
-            leftMargin=16 * mm,
-            rightMargin=16 * mm,
-            topMargin=HEADER_H + BODY_TOP_PAD,      # <<— ensures the frame starts BELOW our header
-            bottomMargin=18 * mm,
-        )
+    # The story's top margin is header space + cushion + some normal top margin
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        title=title or "Report",
+        author=author or "",
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=HEADER_H + BODY_TOP_PAD,      # <<— ensures the frame starts BELOW our header
+        bottomMargin=18 * mm,
+    )
 
-        styles = getSampleStyleSheet()
-        body = styles["BodyText"]; body.leading = 14
-        h2 = styles["Heading2"];   h3 = styles["Heading3"]
+    styles = getSampleStyleSheet()
+    body = styles["BodyText"]; body.leading = 14
+    h2 = styles["Heading2"];   h3 = styles["Heading3"]
 
-        # --- Build story from simple Markdown-ish input (same behavior you had)
-        elements = []
-        bullets_acc = []
+    # --- Build story from simple Markdown-ish input (same behavior you had)
+    elements = []
+    bullets_acc = []
 
-        def flush_bullets():
-            nonlocal bullets_acc, elements
-            if bullets_acc:
-                items = [ListItem(Paragraph(b, body)) for b in bullets_acc]
-                elements.append(ListFlowable(items, bulletType="bullet", start="•"))
-                elements.append(Spacer(1, 6))
-                bullets_acc = []
+    def flush_bullets():
+        nonlocal bullets_acc, elements
+        if bullets_acc:
+            items = [ListItem(Paragraph(b, body)) for b in bullets_acc]
+            elements.append(ListFlowable(items, bulletType="bullet", start="•"))
+            elements.append(Spacer(1, 6))
+            bullets_acc = []
 
-        for raw in (md_text or "").splitlines():
-            line = raw.rstrip()
+    for raw in (md_text or "").splitlines():
+        line = raw.rstrip()
 
-            if not line.strip():
-                flush_bullets()
-                elements.append(Spacer(1, 6))
-                continue
+        if not line.strip():
+            flush_bullets()
+            elements.append(Spacer(1, 6))
+            continue
 
-            if line.startswith("### "):
-                flush_bullets()
-                elements.append(Paragraph(_sanitize(line[4:].strip()), h3))
-                continue
-            if line.startswith("## "):
-                flush_bullets()
-                elements.append(Paragraph(_sanitize(line[3:].strip()), h2))
-                continue
-            if line.startswith("# "):
-                flush_bullets()
-                elements.append(Paragraph(_sanitize(line[2:].strip()), h2))
-                continue
+        if line.startswith("### "):
+            flush_bullets()
+            elements.append(Paragraph(_sanitize(line[4:].strip()), h3))
+            continue
+        if line.startswith("## "):
+            flush_bullets()
+            elements.append(Paragraph(_sanitize(line[3:].strip()), h2))
+            continue
+        if line.startswith("# "):
+            flush_bullets()
+            elements.append(Paragraph(_sanitize(line[2:].strip()), h2))
+            continue
 
-            if line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
-                bullets_acc.append(_sanitize(line.lstrip()[2:].strip()))
-                continue
+        if line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
+            bullets_acc.append(_sanitize(line.lstrip()[2:].strip()))
+            continue
 
-            # Simple **bold** handling
-            htmlish = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", _sanitize(line))
-            elements.append(Paragraph(htmlish, body))
+        # Simple **bold** handling
+        htmlish = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", _sanitize(line))
+        elements.append(Paragraph(htmlish, body))
 
-        flush_bullets()
+    flush_bullets()
 
-        # --- Header painter (drawn completely above story frame)
-        def _split_line_to_width(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
-            """Greedy wrap into multiple lines based on measured width."""
-            words = text.split()
-            if not words:
-                return []
-            lines, cur = [], words[0]
-            for w in words[1:]:
-                trial = cur + " " + w
-                if stringWidth(trial, font_name, font_size) <= max_width:
-                    cur = trial
-                else:
-                    lines.append(cur)
-                    cur = w
-            lines.append(cur)
-            return lines
+    # --- Header painter (drawn completely above story frame)
+    def _split_line_to_width(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+        """Greedy wrap into multiple lines based on measured width."""
+        words = text.split()
+        if not words:
+            return []
+        lines, cur = [], words[0]
+        for w in words[1:]:
+            trial = cur + " " + w
+            if stringWidth(trial, font_name, font_size) <= max_width:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+        return lines
 
-        def _draw_header(c: canvas.Canvas, doc_obj):
-            x_left = doc.leftMargin
-            x_right = PAGE_W - doc.rightMargin
-            usable_w = x_right - x_left
+    def _draw_header(c: canvas.Canvas, doc_obj):
+        x_left = doc.leftMargin
+        x_right = PAGE_W - doc.rightMargin
+        usable_w = x_right - x_left
 
-            # The header occupies the band [PAGE_H - HEADER_H, PAGE_H], entirely ABOVE the story frame.
-            y_top = PAGE_H - (HEADER_H * 0.55)  # small visual offset inside the band
+        # The header occupies the band [PAGE_H - HEADER_H, PAGE_H], entirely ABOVE the story frame.
+        y_top = PAGE_H - (HEADER_H * 0.55)  # small visual offset inside the band
 
-            # Title
-            title_text = _sanitize(title or "Report")
-            c.setFont("Helvetica-Bold", 14)
-            c.setFillColor(colors.black)
-            c.drawString(x_left, y_top, title_text)
+        # Title
+        title_text = _sanitize(title or "Report")
+        c.setFont("Helvetica-Bold", 14)
+        c.setFillColor(colors.black)
+        c.drawString(x_left, y_top, title_text)
 
-            # Subheaders as "Label: value" separated by •, wrapped safely
-            c.setFont("Helvetica", 9)
-            c.setFillColor(colors.HexColor("#374151"))
-            pairs = [f"{k}: {v}" for k, v in clean_sub.items() if k and v]
-            y = y_top - 16  # gap after title
+        # Subheaders as "Label: value" separated by •, wrapped safely
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.HexColor("#374151"))
+        pairs = [f"{k}: {v}" for k, v in clean_sub.items() if k and v]
+        y = y_top - 16  # gap after title
 
-            if pairs:
-                sep = "   •   "
-                full = sep.join(pairs)
-                # If too wide, wrap across multiple rows
-                for line in _split_line_to_width(full, "Helvetica", 9, usable_w):
-                    c.drawString(x_left, y, line)
-                    y -= 12
+        if pairs:
+            sep = "   •   "
+            full = sep.join(pairs)
+            # If too wide, wrap across multiple rows
+            for line in _split_line_to_width(full, "Helvetica", 9, usable_w):
+                c.drawString(x_left, y, line)
+                y -= 12
 
-            # Divider line at the bottom edge of the header band
-            c.setStrokeColor(colors.HexColor("#e5e7eb"))
-            c.setLineWidth(0.8)
-            y_div = PAGE_H - HEADER_H  # bottom of header band
-            c.line(x_left, y_div, x_right, y_div)
+        # Divider line at the bottom edge of the header band
+        c.setStrokeColor(colors.HexColor("#e5e7eb"))
+        c.setLineWidth(0.8)
+        y_div = PAGE_H - HEADER_H  # bottom of header band
+        c.line(x_left, y_div, x_right, y_div)
 
-            # Optional page number footer
-            c.setFont("Helvetica", 8)
-            c.setFillColor(colors.HexColor("#6b7280"))
-            c.drawRightString(x_right, 12 * mm, f"Page {doc.page}")
+        # Optional page number footer
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#6b7280"))
+        c.drawRightString(x_right, 12 * mm, f"Page {doc.page}")
 
-        # Hook: draw the same header on all pages
-        def _on_any_page(c, doc_obj):
-            _draw_header(c, doc_obj)
+    # Hook: draw the same header on all pages
+    def _on_any_page(c, doc_obj):
+        _draw_header(c, doc_obj)
 
-        # Build
-        doc.build(elements, onFirstPage=_on_any_page, onLaterPages=_on_any_page)
-        return buf.getvalue()
+    # Build
+    doc.build(elements, onFirstPage=_on_any_page, onLaterPages=_on_any_page)
+    return buf.getvalue()
 
 def analysis_and_charts_to_html_bytes(
     analysis_md_text: str,
