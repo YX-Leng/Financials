@@ -506,14 +506,14 @@ def _clear_tab1_analysis():
 
 # Convert simple Markdown text to PDF bytes 
 
+
 def md_to_pdf_bytes(
     md_text: str,
     title: str = "",
     author: str = "",
     subheaders: Optional[Dict[str, str]] = None,   # {"Company": "...", "Exchange": "...", "Industry": "...", "FY": "..."}
 ) -> bytes:
-
-     subheaders = subheaders or {}
+    subheaders = subheaders or {}
 
     # --- Sanitize text: remove non-printable/control chars that sometimes sneak in as ''
     def _sanitize(s: str) -> str:
@@ -654,6 +654,7 @@ def md_to_pdf_bytes(
     # Build
     doc.build(elements, onFirstPage=_on_any_page, onLaterPages=_on_any_page)
     return buf.getvalue()
+
 
 def analysis_and_charts_to_html_bytes(
     analysis_md_text: str,
