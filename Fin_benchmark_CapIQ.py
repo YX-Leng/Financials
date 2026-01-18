@@ -837,6 +837,172 @@ def _plot_yoy(industry_df: pd.DataFrame, company_df: pd.DataFrame, metric: str, 
     return fig
 
 
+# =========================
+# YoY helpers (NEW)
+# =========================
+def _fy_to_num(x):
+    try:
+        return float(str(x).strip())
+    except Exception:
+        return None
+
+def _calc_cagr(v_first: float, v_last: float, n_years: int) -> Optional[float]:
+    try:
+        if v_first is None or v_last is None:
+            return None
+        if v_first <= 0 or v_last <= 0 or n_years < 1:
+            return None
+        return (v_last / v_first) ** (1.0 / n_years) - 1.0
+    except Exception:
+        return None
+
+def _summarize_yoy_metric(industry_df: pd.DataFrame,
+                          company_df: pd.DataFrame,
+                          metric_col: str,
+                          metric_name: str,
+                          grade: str) -> Optional[dict]:
+
+    if company_df is None or company_df.empty:
+        return None
+
+    # Normalize frames
+    comp = company_df.rename(columns={metric_col: "value"}).copy()
+    comp["__fy_num__"] = comp["FY"].apply(_fy_to_num)
+    comp = comp.dropna(subset=["__fy_num__", "value"]).sort_values("__fy_num__")
+
+    if comp.empty:
+        return None
+
+    # Keep industry medians for alignment
+    ind = (industry_df[["FY", "p25", "p50", "p75"]].copy()
+           if (industry_df is not None and not industry_df.empty)
+           else pd.DataFrame(columns=["FY", "p25", "p50", "p75"]))
+    ind["__fy_num__"] = ind["FY"].apply(_fy_to_num)
+
+    # Join on FY for last-bucket classification
+    merged = pd.merge(comp[["FY", "__fy_num__", "value"]],
+                      ind[["FY", "__fy_num__", "p25", "p50", "p75"]],
+                      on=["FY", "__fy_num__"], how="left").sort_values("__fy_num__")
+
+    # Series stats
+    vals = merged["value"].tolist()
+    fys = merged["FY"].astype(str).tolist()
+    n = len(vals)
+
+    v_first = vals[0] if n >= 1 else None
+    v_last = vals[-1] if n >= 1 else None
+    cagr = _calc_cagr(v_first, v_last, max(1, n - 1))
+
+    # last YoY change (value and %), if at least 2 points
+    last_abs_chg = None
+    last_pct_chg = None
+    if n >= 2:
+        prev = vals[-2]
+        if prev is not None:
+            last_abs_chg = (v_last - prev) if v_last is not None else None
+            try:
+                last_pct_chg = (v_last / prev - 1.0) if (v_last is not None and prev not in (0, None)) else None
+            except Exception:
+                last_pct_chg = None
+
+    # Above/below median on the last year (if p50 exists)
+    last_row = merged.iloc[-1]
+    p25 = last_row.get("p25", None)
+    p50 = last_row.get("p50", None)
+    p75 = last_row.get("p75", None)
+    above_median = None
+    if p50 is not None and pd.notna(p50) and v_last is not None and pd.notna(v_last):
+        above_median = (v_last >= p50)
+
+    # Last-year bucket for chip label in HTML (Healthy / Satisfactory / Needs Improvement)
+    try:
+        last_bucket = _classify_bucket(v_last, p25, p50, p75, grade)
+    except Exception:
+        last_bucket = "—"
+
+    # Small time series snapshot (trim to last 6 points for prompt compactness)
+    show_k = 6
+    ts_fy = fys[-show_k:]
+    ts_val = vals[-show_k:]
+    # And medians for the same slice if present
+    ts_med = None
+    if "p50" in merged.columns:
+        ts_med = merged["p50"].tolist()[-show_k:]
+
+    summary = {
+        "metric_name": metric_name,
+        "metric_col": metric_col,
+        "grade": grade,
+        "last_fy": str(last_row["FY"]),
+        "last_value": v_last,
+        "last_bucket": last_bucket,
+        "above_median": above_median,
+        "last_abs_chg": last_abs_chg,
+        "last_pct_chg": last_pct_chg,
+        "cagr": cagr,
+        "series_fy": ts_fy,
+        "series_value": ts_val,
+        "series_median": ts_med,
+    }
+    return summary
+
+def _fmt_pct(x, places=1):
+    try:
+        return f"{x*100:.{places}f}%" if x is not None and pd.notna(x) else "NA"
+    except Exception:
+        return "NA"
+
+def _build_yoy_analysis_prompt(company: str,
+                               exchange: str,
+                               industry: str,
+                               summaries: list[dict],
+                               currency: str = "") -> tuple[str, str]:
+    """
+    Focus the model on YoY trends and projected risks.
+    """
+    system = (
+        "You are an experienced financial analyst. "
+        "Write a concise, management-ready analysis of YEAR-ON-YEAR trends and projected operational risks. "
+        "Use clear, non-technical language (no investment advice). "
+        "Prioritize metrics showing adverse trends vs industry medians or high volatility."
+    )
+
+    # Compact, per-metric lines for the LLM
+    lines = []
+    for s in summaries:
+        if not s:
+            continue
+        line = (
+            f"- {s['metric_name']}: "
+            f"last_fy={s['last_fy']}, "
+            f"last_value={('NA' if s['last_value'] is None else f'{s['last_value']:.4g}')} {currency}, "
+            f"last_bucket={s['last_bucket']}, "
+            f"vs_median={'above' if s['above_median'] else 'below' if s['above_median'] is not None else 'NA'}, "
+            f"last_YoY={('NA' if s['last_abs_chg'] is None else f'{s['last_abs_chg']:.4g} {currency}')} "
+            f"({ _fmt_pct(s['last_pct_chg']) }), "
+            f"CAGR={_fmt_pct(s['cagr'])}, "
+            f"series_fy={','.join(map(str, s['series_fy']))}, "
+            f"series_val={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_value'])}"
+        )
+        # Include median series if available (kept short by last 6)
+        if s.get("series_median") is not None:
+            line += f", series_med={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_median'])}"
+        lines.append(line)
+
+    user = (
+        f"Company: {company}\nExchange: {exchange}\nIndustry: {industry}\n\n"
+        "Metrics YoY snapshot (company vs industry medians):\n"
+        + "\n".join(lines)
+        + "\n\nWrite:\n"
+        "1) **Executive summary** (3–5 bullets highlighting the dominant YoY trends).\n"
+        "2) **Projected risks and early-warning signals** (tie to metrics with adverse YoY or below-median levels).\n"
+        "3) **Areas to monitor** over the next 2–3 quarters (specific triggers and thresholds if relevant).\n"
+        "4) **Assumptions/limitations** (missing or sparse data).\n"
+        "Keep to ~250–350 words. Avoid jargon."
+    )
+    return system, user
+
+
 # =============================================================================
 # GPT stubs (unchanged behavior)
 # =============================================================================
@@ -1059,11 +1225,10 @@ def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: s
         "Metrics (company vs industry percentiles):\n" +
         "\n".join(lines) +
         "\n\nWrite:\n"
-        "1) Executive summary (3-5 bullets).\n"
-        "2) Key strengths (tie explicitly to metrics and buckets: Healthy).\n"
-        "3) Key pressure points (tie explicitly to metrics and buckets: Needs Improvement / Satisfactory).\n"
-        "4) Assumptions/limitations (missing or NA values).\n"
-        "Avoid acronyms unless already present in metric names. Keep to ~250-350 words. Bold all subheadings."
+        "1) Executive summary (3-5 bullets) mentioning the key strengths (healthy) and key pressure points (needs improvement).\n"
+        "2) Perform a root cause analysis comparing the metrics against each other and provide concise recommendations.\n"
+        "For Solvency & Distress, mention about going concern probability for the company.\n"
+        "Avoid acronyms unless already present in metric names. Keep to ~250 to 400 words. Bold all subheadings."
     )
     return system, user
 
@@ -1722,59 +1887,167 @@ def main():
     # -------------------------------------------------------------------------
 
     with tab_yoy:
-        type_list2 = list(mtype_df["Type"].dropna().astype(str).unique())
+        type_list2 = list(mtype_df["Type"].dropna().astype(str).unique().tolist())
         default_idx2 = 0 if st.session_state.get("mtype_yoy") is None else type_list2.index(st.session_state["mtype_yoy"])
         mtype2 = st.selectbox("Select a metrics type for YoY", type_list2, key="mtype_yoy", index=default_idx2)
         subset2 = mtype_df[mtype_df["Type"] == mtype2].copy()
-        st.caption(f"Industry percentiles by FY for: **{exch} · {ind}**")
 
+        st.caption(f"Industry percentiles by FY for: **{exch} · {ind}**")
 
         tidy = pct_tidy[
             (pct_tidy["EXCHANGE"].astype(str) == exch) & (pct_tidy["INDUSTRY"].astype(str) == ind)
         ]
-
         company_series = yoy_company_series(data_df, exch, ind, company)
 
         grid = st.columns(2)
-        skipped_yoy = []  # <- track omitted metrics
+        skipped_yoy = []
+        yoy_figs = []       
+        yoy_summaries = []   
 
         for i, (_, rec) in enumerate(subset2.iterrows()):
-            m_col  = str(rec["Metrics_Col"]).strip()
+            m_col = str(rec["Metrics_Col"]).strip()
             m_name = str(rec["Metrics_Name"]).strip()
             m_grade = str(rec["Metrics_Grade"]).strip()
 
-            # Industry percentiles for YoY — this won't KeyError, may be empty though
+            # Industry percentiles for YoY (can be empty)
             ind_df = (
                 tidy[tidy["metric"] == m_col][["FY", "p25", "p50", "p75"]]
                 .dropna()
                 .sort_values("FY")
             )
 
-            # Company series — SAFE: only take the column if present
+            # Company series — safe take
             comp_df, missing = _safe_take(company_series, ["FY", m_col])
             if missing:
-                # Column absent in company data; we can either skip or still show industry-only chart.
-                # Since you asked to "omit", we'll skip completely:
                 skipped_yoy.append(m_name)
                 continue
-
             comp_df = comp_df.dropna().sort_values("FY")
 
-            # If BOTH are empty, skip chart
+            # Skip if both are empty
             if (ind_df is None or ind_df.empty) and (comp_df is None or comp_df.empty):
                 skipped_yoy.append(m_name)
                 continue
 
+            # Plot
             with grid[i % 2]:
                 st.markdown(f"**{m_name}**")
                 fig = _plot_yoy(ind_df, comp_df, m_col, m_grade)
                 st.plotly_chart(fig, width="stretch", key=f"yoy_{m_col}")
 
+            # Determine last-year bucket for HTML chip (Healthy/Satisfactory/Needs Improvement)
+            bucket_last = "—"
+            try:
+                if not comp_df.empty:
+                    last_fy = comp_df["FY"].iloc[-1]
+                    last_val = comp_df[m_col].iloc[-1]
+                    if not ind_df.empty and (last_fy in ind_df["FY"].values):
+                        pr = ind_df[ind_df["FY"] == last_fy].iloc[0]
+                        bucket_last = _classify_bucket(
+                            float(last_val),
+                            float(pr.get("p25", float("nan"))),
+                            float(pr.get("p50", float("nan"))),
+                            float(pr.get("p75", float("nan"))),
+                            m_grade
+                        )
+            except Exception:
+                bucket_last = "—"
+
+            # Keep the figure for HTML export
+            yoy_figs.append((m_name, bucket_last, fig))
+
+            # Summarize for LLM
+            comp_tmp = comp_df.rename(columns={m_col: m_col})[["FY", m_col]].copy()
+            # Build a compatible company_df shape (FY + metric col)
+            comp_tmp = comp_tmp.rename(columns={m_col: m_col})
+            yoy_summaries.append(
+                _summarize_yoy_metric(industry_df=ind_df,
+                                    company_df=comp_df[["FY", m_col]].rename(columns={m_col: m_col}),
+                                    metric_col=m_col,
+                                    metric_name=m_name,
+                                    grade=m_grade)
+            )
+
         if skipped_yoy:
             with st.expander("Skipped YoY metrics (missing in company data / industry percentiles)", expanded=False):
                 st.write(", ".join(skipped_yoy))
 
-    
+        # ========== YoY ANALYSIS ==========
+        st.divider()
+        st.subheader("YoY Trend – Analysis & Projected Risks")
+        yoy_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
+
+        btn_yoy = st.button(
+            "Generate YoY Analysis",
+            type="primary",
+            key="btn_yoy_analysis",
+            disabled=(len([s for s in yoy_summaries if s]) == 0)
+        )
+
+        if btn_yoy:
+            api_key_fin = _get_openai_api_key()
+            if not api_key_fin:
+                st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+            else:
+                # Currency label by exchange
+                currency_label = CURRENCY_BY_EXCHANGE.get(exch, "")
+                sys_p, usr_p = _build_yoy_analysis_prompt(
+                    company=company, exchange=exch, industry=ind,
+                    summaries=[s for s in yoy_summaries if s],
+                    currency=currency_label
+                )
+                with st.spinner("Calling model and drafting YoY analysis..."):
+                    yoy_text, yoy_err = _call_openai(
+                        sys_p, usr_p, api_key=api_key_fin, model=yoy_model, max_tokens=600
+                    )
+                if yoy_err:
+                    st.error(f"API Error: {yoy_err}")
+                elif yoy_text:
+                    st.session_state["yoy_analysis_text"] = yoy_text.strip()
+                    st.success("YoY analysis generated.")
+                else:
+                    st.warning("No output received from the model. Try a smaller prompt or different model.")
+
+        if st.session_state.get("yoy_analysis_text"):
+            st.markdown(st.session_state["yoy_analysis_text"])
+
+        # ========== HTML EXPORT ==========
+        if st.session_state.get("yoy_analysis_text") and yoy_figs:
+            text = st.session_state["yoy_analysis_text"]
+            # Compute simple title window from available FY in figures/series
+            try:
+                # Derive period from company_series
+                fy_list = company_series["FY"].astype(str).tolist()
+                if fy_list:
+                    period = f"{min(fy_list)}–{max(fy_list)}"
+                else:
+                    period = str(fy)
+            except Exception:
+                period = str(fy)
+
+            # Cache by combo key
+            combo_key = f"{company}|{exch}|{ind}|{mtype2}|{len(yoy_figs)}|{hash(text)}"
+            if st.session_state.get("yoy_combo_key") != combo_key:
+                st.session_state.pop("yoy_combo_html_bytes", None)
+                st.session_state["yoy_combo_key"] = combo_key
+
+            if "yoy_combo_html_bytes" not in st.session_state:
+                st.session_state["yoy_combo_html_bytes"] = analysis_and_charts_to_html_bytes(
+                    analysis_md_text=text,
+                    figs=yoy_figs,
+                    title=f"{company} — YoY Trends & Projected Risks ({period})",
+                    subtitle=f"{exch} · {ind}",
+                    skipped=skipped_yoy,
+                )
+
+            st.download_button(
+                "Download YoY analysis + charts (.html)",
+                data=st.session_state["yoy_combo_html_bytes"],
+                file_name="yoy_trends_and_risks.html",
+                mime="text/html",
+                use_container_width=True,
+                key="dl_yoy_plus_charts_html",
+            )
+
     # -------------------------------------------------------------------------
     # TAB 3 — Suggested Audit Areas (Top 3)
     # -------------------------------------------------------------------------
