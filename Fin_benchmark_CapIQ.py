@@ -974,46 +974,6 @@ def _fmt_pct(x, places=1):
     try: return f"{x*100:.{places}f}%" if x is not None and pd.notna(x) else "NA"
     except Exception: return "NA"
 
-def _build_yoy_analysis_prompt(company: str, exchange: str, industry: str,
-                               summaries: list[dict], currency: str = "") -> tuple[str, str]:
-    system = (
-        "You are an experienced financial analyst. "
-        "Write a concise, management-ready analysis of YEAR-ON-YEAR trends and projected operational risks. "
-        "Use clear, non-technical language (no investment advice). "
-        "Prioritize metrics showing adverse trends vs industry medians or high volatility."
-    )
-    lines = []
-    for s in summaries:
-        if not s: continue
-        line = (
-            f"- {s['metric_name']}: "
-            f"last_fy={s['last_fy']}, "
-            f"last_value={('NA' if s['last_value'] is None else f'{s['last_value']:.4g}')} {currency}, "
-            f"last_bucket={s['last_bucket']}, "
-            f"vs_median={'above' if s['above_median'] else 'below' if s['above_median'] is not None else 'NA'}, "
-            f"last_YoY={('NA' if s['last_abs_chg'] is None else f'{s['last_abs_chg']:.4g} {currency}')} "
-            f"({_fmt_pct(s['last_pct_chg'])}), "
-            f"CAGR={_fmt_pct(s['cagr'])}, "
-            f"series_fy={','.join(map(str, s['series_fy']))}, "
-            f"series_val={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_value'])}"
-        )
-        if s.get("series_median") is not None:
-            line += f", series_med={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_median'])}"
-        lines.append(line)
-
-    user = (
-        f"Company: {company}\nExchange: {exchange}\nIndustry: {industry}\n\n"
-        "Metrics YoY snapshot (company vs industry medians):\n"
-        + "\n".join(lines)
-        + "\n\nWrite:\n"
-        "1) **Executive summary** (3–5 bullets highlighting the dominant YoY trends).\n"
-        "2) **Projected risks and early-warning signals** (tie to metrics with adverse YoY or below-median levels).\n"
-        "3) **Areas to monitor** over the next 2–3 quarters (specific triggers and thresholds if relevant).\n"
-        "4) **Assumptions/limitations** (missing or sparse data).\n"
-        "Keep to ~250–350 words. Avoid jargon."
-    )
-    return system, user
-
 # =============================================================================
 # GPT stubs (unchanged behavior)
 # =============================================================================
@@ -1209,7 +1169,7 @@ def _pick_worst_per_type(summary_rows, mtype_df, max_types=None):
 
     return worst_per_type
 
-# --- Financial analysis prompt builder ---
+# --- Prompt builders ---
 def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: str,
                                      metrics_rows: list[dict], currency: str = "") -> tuple[str, str]:
 
@@ -1243,6 +1203,44 @@ def _build_fin_analysis_prompt(company: str, exchange: str, industry: str, fy: s
     )
     return system, user
 
+def _build_yoy_analysis_prompt(company: str, exchange: str, industry: str,
+                               summaries: list[dict], currency: str = "") -> tuple[str, str]:
+    system = (
+        "You are an experienced financial analyst."
+        "Write a concise, management-ready analysis of YEAR-ON-YEAR trends and projected operational risks. "
+        "Use clear, non-technical language (no investment advice). "
+        "Prioritize metrics showing adverse trends vs industry medians or high volatility."
+    )
+    lines = []
+    for s in summaries:
+        if not s: continue
+        line = (
+            f"- {s['metric_name']}: "
+            f"last_fy={s['last_fy']}, "
+            f"last_value={('NA' if s['last_value'] is None else f'{s['last_value']:.4g}')} {currency}, "
+            f"last_bucket={s['last_bucket']}, "
+            f"vs_median={'above' if s['above_median'] else 'below' if s['above_median'] is not None else 'NA'}, "
+            f"last_YoY={('NA' if s['last_abs_chg'] is None else f'{s['last_abs_chg']:.4g} {currency}')} "
+            f"({_fmt_pct(s['last_pct_chg'])}), "
+            f"CAGR={_fmt_pct(s['cagr'])}, "
+            f"series_fy={','.join(map(str, s['series_fy']))}, "
+            f"series_val={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_value'])}"
+        )
+        if s.get("series_median") is not None:
+            line += f", series_med={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_median'])}"
+        lines.append(line)
+
+    user = (
+        f"Company: {company}\nExchange: {exchange}\nIndustry: {industry}\n\n"
+        "Metrics YoY snapshot (company vs industry medians):\n"
+        + "\n".join(lines)
+        + "\n\nWrite:\n"
+        "1) Executive summary (3–5 bullets highlighting the dominant YoY trends).\n"
+        "2) Projected risks and early-warning signals (tie to metrics with adverse YoY or below-median levels).\n"
+        "3) Areas to monitor over the next 12 months (specific triggers and thresholds if relevant).\n"
+        "Avoid acronyms unless already present in metric names. Keep to ~250 to 400 words. Bold all subheadings."
+    )
+    return system, user
 
 def _build_audit_prompt(company, exchange, industry, fy, summary_rows, mtype_df,
                                        max_types=3, counts_only=False):
@@ -2011,20 +2009,12 @@ def main():
         )
 
         if btn_yoy:
-            # 1) Show hard facts so you know what's missing
-            st.caption(
-                f"DEBUG: charts={len(yoy_figs)} · summaries={len([s for s in yoy_summaries if s])} · "
-                f"has__summarize={'_summarize_yoy_metric' in globals()} · "
-                f"has__build_prompt={'_build_yoy_analysis_prompt' in globals()}"
-            )
-
-            # 2) Check that your helpers really exist in this runtime
             if "_build_yoy_analysis_prompt" not in globals():
                 st.error("YoY helper `_build_yoy_analysis_prompt` is missing. Add it above `main()`.")
             elif "_summarize_yoy_metric" not in globals():
                 st.error("YoY helper `_summarize_yoy_metric` is missing. Add it above `main()`.")
             else:
-                # 3) Proceed only if you actually have at least one valid summary
+                # 1) Proceed only if you actually have at least one valid summary
                 valid_summaries = [s for s in yoy_summaries if s]
                 if not valid_summaries:
                     # You reached this branch because the helpers exist but produced no summaries.
@@ -2034,7 +2024,7 @@ def main():
                         "Verify the company name matches `ENTITY_NAME` exactly and that the metric has numeric values across ≥ 2 FY."
                     )
                 else:
-                    # 4) Build the proper YoY prompt and call the model
+                    # 2) Build the proper YoY prompt and call the model
                     api_key_fin = _get_openai_api_key()
                     if not api_key_fin:
                         st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
@@ -2186,23 +2176,23 @@ def main():
                         st.markdown(text)
                         st.session_state["ai_audit_suggestions"] = text  
 
-                if st.session_state.get("ai_audit_suggestions"):
-                    st.markdown(st.session_state["ai_audit_suggestions"])
-                    # Build once and cache in session
-                    if "ai_audit_suggestions_pdf_bytes" not in st.session_state:
-                        st.session_state["ai_audit_suggestions_pdf_bytes"] = md_to_pdf_bytes(
-                            st.session_state["ai_audit_suggestions"],
-                            title=f"{company} – Suggested Audit Areas ({fy_sel})",
-                            author="Auto-generated by the dashboard"
-                        )
-
-                    st.download_button(
-                        "Download Suggestions (.pdf)",
-                        data=st.session_state["ai_audit_suggestions_pdf_bytes"],
-                        file_name="audit_suggestions.pdf",
-                        mime="application/pdf",
-                        key="dl_audit_suggestions_pdf"
+            if st.session_state.get("ai_audit_suggestions"):
+                st.markdown(st.session_state["ai_audit_suggestions"])
+                # Build once and cache in session
+                if "ai_audit_suggestions_pdf_bytes" not in st.session_state:
+                    st.session_state["ai_audit_suggestions_pdf_bytes"] = md_to_pdf_bytes(
+                        st.session_state["ai_audit_suggestions"],
+                        title=f"{company} – Suggested Audit Areas ({fy_sel})",
+                        author="Auto-generated by the dashboard"
                     )
+
+                st.download_button(
+                    "Download Suggestions (.pdf)",
+                    data=st.session_state["ai_audit_suggestions_pdf_bytes"],
+                    file_name="audit_suggestions.pdf",
+                    mime="application/pdf",
+                    key="dl_audit_suggestions_pdf"
+                )
 
     # -------------------------------------------------------------------------
     # TAB 4 — Audit Work Program
@@ -2269,33 +2259,65 @@ def main():
             st.markdown("**Control Description**")
             st.info(rec["Control Description"])
 
-
-            # ---- Documents required (column F) -> uploaders (use robust parser) ----
+            # --- Documents required (column F) -> Yes/No + conditional uploaders
             st.markdown("**Documents required**")
             doc_items = _parse_documents_required(rec["Documents required"])
-            uploaded = {}
-            for i, lab in enumerate(doc_items):
-                uploaded[lab] = st.file_uploader(
-                    f"Upload: {lab}", type=None, accept_multiple_files=False,
-                    key=f"doc_{sel_scope}_{sel_sub}_{i}"
-                )
 
+            answers = {}  # { label: {"have": "Yes"/"No", "file": <UploadedFile or None>} }
+            have_keys = []
+            for i, lab in enumerate(doc_items):
+                col_q, col_u = st.columns([1, 1.4])
+
+                have_key = f"have_{sel_scope}_{sel_sub}_{i}"
+                have_val = col_q.radio(
+                    f"Do you have this document?\n\n**{lab}**",
+                    options=["No", "Yes"], index=0, horizontal=True, key=have_key
+                )
+                have_keys.append(have_key)
+
+                file_obj = None
+                if have_val == "Yes":
+                    file_obj = col_u.file_uploader(
+                        f"Upload: {lab}", type=None, accept_multiple_files=False,
+                        key=f"doc_{sel_scope}_{sel_sub}_{i}"
+                    )
+                else:
+                    # Ensure any previous file is cleared if user flips Yes -> No
+                    st.session_state.pop(f"doc_{sel_scope}_{sel_sub}_{i}", None)
+
+                answers[lab] = {"have": have_val, "file": file_obj}
+
+            # Validation: all questions answered AND all "Yes" have a file
+            # (radios always have a value, default "No", so 'answered' is implicit)
+            docs_ok = all(
+                (ans["have"] == "No") or (ans["have"] == "Yes" and ans["file"] is not None)
+                for ans in answers.values()
+            )
+
+            if not docs_ok:
+                st.info("Please answer **Yes/No** for every item. For each **Yes**, upload the document to proceed.")
             st.markdown("---")
 
+
             # ---- OpenAI Draft Runner: open files, extract excerpts, evaluate vs test steps ----
-            submit_wp = st.button("Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}")
+            
+            submit_wp = st.button(
+                "Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}",disabled=not docs_ok)
 
             if submit_wp:
                 # 1) Save + parse files
                 os.makedirs("uploads", exist_ok=True)
                 saved = []
                 parsed_docs = []
-                for label, file in uploaded.items():
-                    if file is not None:
+
+                for label, ans in answers.items():
+                    file = ans.get("file")
+                    if ans.get("have") == "Yes" and file is not None:
                         safe_name = f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}".replace(" ", "_")
                         path = os.path.join("uploads", safe_name)
                         with open(path, "wb") as f:
                             f.write(file.getbuffer())
+
                         text, meta = extract_text_from_upload(file)
                         meta["label"] = label
                         parsed_docs.append({"text": text, "meta": meta})
