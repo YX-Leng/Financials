@@ -1684,7 +1684,7 @@ def main():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.4 | 2026")
+    st.sidebar.caption("version 3.5 | 2026")
 
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
@@ -2431,24 +2431,115 @@ def main():
 
     with tab_obs:
         st.subheader("Audit Observations")
+
         obs = st.session_state.get("audit_observations", "")
         if not obs:
             st.info("No observations yet. Run a work program in Tab 4.")
         else:
             df_obs = pd.DataFrame(obs)
-            st.dataframe(df_obs, use_container_width=True)
 
-            # Export options (CSV / Excel)
-            csv = df_obs.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", data=csv, file_name="audit_observations.csv", mime="text/csv")
+            # ---- Column order + friendly display names ----
+            col_order = [
+                "company", "exchange", "industry", "fy",
+                "scope", "sub_process",
+                "severity", "observation", "root_cause", "recommendation",
+                "evidence_links",
+            ]
+            # Keep only columns that exist, in preferred order
+            col_order = [c for c in col_order if c in df_obs.columns]
+            df_obs = df_obs[col_order].copy()
 
-            # Excel export
+            # Friendly headers map
+            headers = {
+                "company": "Company",
+                "exchange": "Exchange",
+                "industry": "Industry",
+                "fy": "FY",
+                "scope": "Scope",
+                "sub_process": "Sub-process",
+                "severity": "Severity",
+                "observation": "Observation",
+                "root_cause": "Root cause",
+                "recommendation": "Recommendation",
+                "evidence_links": "Evidence",
+            }
+            df_obs = df_obs.rename(columns=headers)
+
+            # ---- Show short evidence names in the grid (export keeps full paths) ----
+            def _shorten(paths):
+                try:
+                    if isinstance(paths, (list, tuple)):
+                        import os
+                        return ", ".join(os.path.basename(p) for p in paths)
+                    return paths
+                except Exception:
+                    return paths
+
+            df_display = df_obs.copy()
+            if "Evidence" in df_display.columns:
+                df_display["Evidence"] = df_display["Evidence"].apply(_shorten)
+
+            # ---- Add CSS to enable wrapping and improve grid readability ----
+            st.markdown(
+                """
+                <style>
+                /* Make dataframe cells wrap and grow vertically */
+                div[data-testid="stDataFrame"] div[role="gridcell"] {
+                    white-space: normal !important;
+                    overflow-wrap: anywhere !important;
+                    line-height: 1.25rem;        /* 20px for readability */
+                    padding-top: 6px; 
+                    padding-bottom: 6px;
+                }
+                /* Header wrap as well (for smaller screens) */
+                div[data-testid="stDataFrame"] div[role="columnheader"] {
+                    white-space: normal !important;
+                    overflow-wrap: anywhere !important;
+                }
+                /* Slightly taller rows for readability */
+                div[data-testid="stDataFrame"] div[role="row"] {
+                    align-items: start;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # ---- Render as a responsive grid with sensible column widths ----
+            from streamlit import column_config as cc
+
+            st.dataframe(
+                df_display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Company": cc.TextColumn(width="small"),
+                    "Exchange": cc.TextColumn(width="small"),
+                    "Industry": cc.TextColumn(width="small"),
+                    "FY": cc.TextColumn(width="small"),
+                    "Scope": cc.TextColumn(width="medium"),
+                    "Sub-process": cc.TextColumn(width="medium"),
+                    "Severity": cc.TextColumn(width="small"),
+                    # Long text columns get larger widths (wrapping enabled via CSS above)
+                    "Observation": cc.TextColumn(width="large"),
+                    "Root cause": cc.TextColumn(width="large"),
+                    "Recommendation": cc.TextColumn(width="large"),
+                    "Evidence": cc.TextColumn(width="medium"),
+                },
+                height=520,  
+            )
+
+            # ---- Keep Excel export with full paths (no shortening) ----
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine="openpyxl") as xw:
+                # Export original df_obs with full evidence_links values
                 df_obs.to_excel(xw, index=False, sheet_name="Observations")
-            st.download_button("Download Excel", data=bio.getvalue(), file_name="audit_observations.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+            st.download_button(
+                "Download Excel",
+                data=bio.getvalue(),
+                file_name="audit_observations.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
 # =============================================================================
 # Entrypoint
