@@ -2173,8 +2173,7 @@ def main():
                     elif text:
                         # 1) Show readable results on-page
                         st.success("Audit suggestions generated!")
-                        st.markdown(text)
-                        st.session_state["ai_audit_suggestions"] = text  
+                        st.session_state["ai_audit_suggestions"] = text
 
             if st.session_state.get("ai_audit_suggestions"):
                 st.markdown(st.session_state["ai_audit_suggestions"])
@@ -2295,7 +2294,7 @@ def main():
             )
 
             if not docs_ok:
-                st.info("Please answer **Yes/No** for every item. For each **Yes**, upload the document to proceed.")
+                st.warning("Please answer **Yes/No** for every item. For each **Yes**, upload the document to proceed.")
             st.markdown("---")
 
 
