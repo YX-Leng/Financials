@@ -1722,7 +1722,7 @@ def main():
     st.markdown(f"**Company:** {company} &nbsp;&nbsp; **Exchange:** {exch} &nbsp;&nbsp; "
                 f"**Industry:** {ind} &nbsp;&nbsp; **FY:** {fy_sel}")
         
-    tab_bm, tab_yoy, tab_audit, tab_wp, tab_obs = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Audit Areas",
+    tab_bm, tab_yoy, tab_audit, tab_wp, tab_obs = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Top 3 Audit Areas",
         "4.Audit Work Program", "5.Observations - Summary"
     ])
 
@@ -1887,54 +1887,61 @@ def main():
     # -------------------------------------------------------------------------
 
     with tab_yoy:
+        # --- Header / selectors ---
         type_list2 = list(mtype_df["Type"].dropna().astype(str).unique().tolist())
-        default_idx2 = 0 if st.session_state.get("mtype_yoy") is None else type_list2.index(st.session_state["mtype_yoy"])
-        mtype2 = st.selectbox("Select a metrics type for YoY", type_list2, key="mtype_yoy", index=default_idx2)
-        subset2 = mtype_df[mtype_df["Type"] == mtype2].copy()
+        if st.session_state.get("mtype_yoy") in type_list2:
+            default_idx2 = type_list2.index(st.session_state["mtype_yoy"])
+        else:
+            default_idx2 = 0
+        mtype2 = st.selectbox("Select a metrics type for YoY trend", type_list2, key="mtype_yoy", index=default_idx2)
 
+        subset2 = mtype_df[mtype_df["Type"] == mtype2].copy()
         st.caption(f"Industry percentiles by FY for: **{exch} · {ind}**")
 
+        # --- Data slices (frozen by sidebar Submit) ---
         tidy = pct_tidy[
             (pct_tidy["EXCHANGE"].astype(str) == exch) & (pct_tidy["INDUSTRY"].astype(str) == ind)
         ]
         company_series = yoy_company_series(data_df, exch, ind, company)
 
+        # --- Layout & accumulators ---
         grid = st.columns(2)
-        skipped_yoy = []
-        yoy_figs = []       
-        yoy_summaries = []   
+        skipped_yoy: list[str] = []
+        yoy_figs: list[tuple[str, str, go.Figure]] = []   # (metric_name, bucket_last, fig)
+        yoy_summaries: list[dict] = []                    # compact LLM summaries per metric
 
+        # --- Per-metric charts + collections ---
         for i, (_, rec) in enumerate(subset2.iterrows()):
             m_col = str(rec["Metrics_Col"]).strip()
             m_name = str(rec["Metrics_Name"]).strip()
             m_grade = str(rec["Metrics_Grade"]).strip()
 
-            # Industry percentiles for YoY (can be empty)
+            # Industry percentiles for YoY (may be empty)
             ind_df = (
                 tidy[tidy["metric"] == m_col][["FY", "p25", "p50", "p75"]]
                 .dropna()
                 .sort_values("FY")
             )
 
-            # Company series — safe take
+            # Company series (safe take); skip if the metric column isn't present for this company
             comp_df, missing = _safe_take(company_series, ["FY", m_col])
             if missing:
                 skipped_yoy.append(m_name)
                 continue
             comp_df = comp_df.dropna().sort_values("FY")
 
-            # Skip if both are empty
+            # If both company and industry are empty, skip
             if (ind_df is None or ind_df.empty) and (comp_df is None or comp_df.empty):
                 skipped_yoy.append(m_name)
                 continue
 
-            # Plot
+            # Render chart
             with grid[i % 2]:
                 st.markdown(f"**{m_name}**")
                 fig = _plot_yoy(ind_df, comp_df, m_col, m_grade)
-                st.plotly_chart(fig, width="stretch", key=f"yoy_{m_col}")
+                st.plotly_chart(fig, use_container_width=True, key=f"yoy_{m_col}")
 
-            # Determine last-year bucket for HTML chip (Healthy/Satisfactory/Needs Improvement)
+            # Compute last-year bucket (for HTML chip label)
             bucket_last = "—"
             try:
                 if not comp_df.empty:
@@ -1952,106 +1959,129 @@ def main():
             except Exception:
                 bucket_last = "—"
 
-            # Keep the figure for HTML export
+            # >>> SAVE chart for export
             yoy_figs.append((m_name, bucket_last, fig))
 
-            # Summarize for LLM
-            comp_tmp = comp_df.rename(columns={m_col: m_col})[["FY", m_col]].copy()
-            # Build a compatible company_df shape (FY + metric col)
-            comp_tmp = comp_tmp.rename(columns={m_col: m_col})
-            yoy_summaries.append(
-                _summarize_yoy_metric(industry_df=ind_df,
-                                    company_df=comp_df[["FY", m_col]].rename(columns={m_col: m_col}),
-                                    metric_col=m_col,
-                                    metric_name=m_name,
-                                    grade=m_grade)
-            )
+            # >>> Build compact YoY summary for GPT (if helper is present)
+            try:
+                summary = _summarize_yoy_metric(
+                    industry_df=ind_df,
+                    company_df=comp_df[["FY", m_col]].rename(columns={m_col: m_col}),
+                    metric_col=m_col,
+                    metric_name=m_name,
+                    grade=m_grade
+                )
+                if summary:
+                    yoy_summaries.append(summary)
+            except NameError:
+                # If the helper isn't in your build, we just skip summaries (charts will still export)
+                pass
 
+        # Show skipped list, if any
         if skipped_yoy:
             with st.expander("Skipped YoY metrics (missing in company data / industry percentiles)", expanded=False):
                 st.write(", ".join(skipped_yoy))
 
-        # ========== YoY ANALYSIS ==========
+        # Persist figures in session for any later use
+        st.session_state["yoy_figs"] = yoy_figs
+
+        # ============================
+        # YoY ANALYSIS (GPT write-up)
+        # ============================
         st.divider()
-        st.subheader("YoY Trend – Analysis & Projected Risks")
+        st.subheader("YoY Trend - Analysis")
         yoy_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
 
         btn_yoy = st.button(
             "Generate YoY Analysis",
             type="primary",
             key="btn_yoy_analysis",
-            disabled=False)
+            disabled=False  # allow click; we'll guard below if summaries are empty
+        )
 
         if btn_yoy:
             api_key_fin = _get_openai_api_key()
             if not api_key_fin:
                 st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
             else:
-                # Currency label by exchange
-                currency_label = CURRENCY_BY_EXCHANGE.get(exch, "")
-                sys_p, usr_p = _build_yoy_analysis_prompt(
-                    company=company, exchange=exch, industry=ind,
-                    summaries=[s for s in yoy_summaries if s],
-                    currency=currency_label
-                )
-                with st.spinner("Calling model and drafting YoY analysis..."):
-                    yoy_text, yoy_err = _call_openai(
-                        sys_p, usr_p, api_key=api_key_fin, model=yoy_model, max_tokens=600
-                    )
-                if yoy_err:
-                    st.error(f"API Error: {yoy_err}")
-                elif yoy_text:
-                    st.session_state["yoy_analysis_text"] = yoy_text.strip()
-                    st.success("YoY analysis generated.")
+                valid_summaries = [s for s in yoy_summaries if s]
+                if not valid_summaries:
+                    st.warning("No YoY data available to analyze for the selected metrics type/company.")
                 else:
-                    st.warning("No output received from the model. Try a smaller prompt or different model.")
+                    currency_label = CURRENCY_BY_EXCHANGE.get(exch, "")
+                    try:
+                        sys_p, usr_p = _build_yoy_analysis_prompt(
+                            company=company, exchange=exch, industry=ind,
+                            summaries=valid_summaries, currency=currency_label
+                        )
+                    except NameError:
+                        st.error("YoY prompt helper `_build_yoy_analysis_prompt` is missing. Please add it.")
+                        sys_p, usr_p = None, None
 
+                    if sys_p and usr_p:
+                        with st.spinner("Calling model and drafting YoY analysis..."):
+                            yoy_text, yoy_err = _call_openai(
+                                sys_p, usr_p, api_key=api_key_fin, model=yoy_model, max_tokens=600
+                            )
+                        if yoy_err:
+                            st.error(f"API Error: {yoy_err}")
+                        elif yoy_text:
+                            st.session_state["yoy_analysis_text"] = yoy_text.strip()
+                            st.success("YoY analysis generated.")
+                        else:
+                            st.warning("No output received from the model. Try a smaller prompt or different model.")
+
+        # Show analysis if present
         if st.session_state.get("yoy_analysis_text"):
             st.markdown(st.session_state["yoy_analysis_text"])
 
-        # ========== HTML EXPORT ==========
-        if st.session_state.get("yoy_analysis_text") and yoy_figs:
-            text = st.session_state["yoy_analysis_text"]
-            # Compute simple title window from available FY in figures/series
+        # ============================
+        # HTML EXPORT (charts + write-up)
+        # ============================
+        has_charts = bool(yoy_figs)
+        if has_charts:
+            # Determine the FY window shown
             try:
-                # Derive period from company_series
                 fy_list = company_series["FY"].astype(str).tolist()
-                if fy_list:
-                    period = f"{min(fy_list)}–{max(fy_list)}"
-                else:
-                    period = str(fy)
+                period = f"{min(fy_list)}–{max(fy_list)}" if fy_list else str(fy_sel)
             except Exception:
-                period = str(fy)
+                period = str(fy_sel)
 
-            # Cache by combo key
-            combo_key = f"{company}|{exch}|{ind}|{mtype2}|{len(yoy_figs)}|{hash(text)}"
+            yoy_text = (st.session_state.get("yoy_analysis_text") or "").strip()
+
+            # Cache key to avoid regenerating the same HTML
+            combo_key = f"{company}|{exch}|{ind}|{mtype2}|{len(yoy_figs)}|{hash(yoy_text)}"
             if st.session_state.get("yoy_combo_key") != combo_key:
                 st.session_state.pop("yoy_combo_html_bytes", None)
                 st.session_state["yoy_combo_key"] = combo_key
 
             if "yoy_combo_html_bytes" not in st.session_state:
                 st.session_state["yoy_combo_html_bytes"] = analysis_and_charts_to_html_bytes(
-                    analysis_md_text=text,
+                    analysis_md_text=yoy_text,  # empty string allowed (charts-only export)
                     figs=yoy_figs,
                     title=f"{company} — YoY Trends & Projected Risks ({period})",
                     subtitle=f"{exch} · {ind}",
                     skipped=skipped_yoy,
                 )
 
+            btn_label = "Download YoY analysis + charts (.html)" if yoy_text else "Download YoY charts (.html)"
             st.download_button(
-                "Download YoY analysis + charts (.html)",
+                btn_label,
                 data=st.session_state["yoy_combo_html_bytes"],
                 file_name="yoy_trends_and_risks.html",
                 mime="text/html",
                 use_container_width=True,
                 key="dl_yoy_plus_charts_html",
             )
+        else:
+            st.info("No YoY charts to export yet.")
+
 
     # -------------------------------------------------------------------------
     # TAB 3 — Suggested Audit Areas (Top 3)
     # -------------------------------------------------------------------------
     with tab_audit: 
-        st.subheader("Suggested Audit Areas")
+        st.subheader("Suggested Top 3 Audit Areas")
         st.caption("Analyzes selected company financial metrics, industry benchmarks and suggests the top 3 key auditable areas for assessment.")
         
         # --- 1. DATA FILTERING (Fixes the NameError) ---
