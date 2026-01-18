@@ -1926,7 +1926,8 @@ def main():
             yoy_figs.append((m_name, bucket_last, fig))
 
             # >>> Build compact YoY summary for GPT (if helper is present)
-            try:
+
+            if "_summarize_yoy_metric" in globals():
                 summary = _summarize_yoy_metric(
                     industry_df=ind_df,
                     company_df=comp_df[["FY", m_col]].rename(columns={m_col: m_col}),
@@ -1936,9 +1937,8 @@ def main():
                 )
                 if summary:
                     yoy_summaries.append(summary)
-            except NameError:
-                # If the helper isn't in your build, we just skip summaries (charts will still export)
-                pass
+            else:
+                st.error("YoY helper `_summarize_yoy_metric` is missing. Please add it before generating analysis.")
 
         # Show skipped list, if any
         if skipped_yoy:
