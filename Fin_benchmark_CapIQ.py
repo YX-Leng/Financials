@@ -838,20 +838,17 @@ def _plot_yoy(industry_df: pd.DataFrame, company_df: pd.DataFrame, metric: str, 
 
 
 # =========================
-# YoY helpers (NEW)
+# YoY helpers
 # =========================
-def _fy_to_num(x):
-    try:
-        return float(str(x).strip())
-    except Exception:
-        return None
 
-def _calc_cagr(v_first: float, v_last: float, n_years: int) -> Optional[float]:
+def _fy_to_num(x):
+    try: return float(str(x).strip())
+    except Exception: return None
+
+def _calc_cagr(v_first: float, v_last: float, n_years: int):
     try:
-        if v_first is None or v_last is None:
-            return None
-        if v_first <= 0 or v_last <= 0 or n_years < 1:
-            return None
+        if v_first is None or v_last is None: return None
+        if v_first <= 0 or v_last <= 0 or n_years < 1: return None
         return (v_last / v_first) ** (1.0 / n_years) - 1.0
     except Exception:
         return None
@@ -861,80 +858,60 @@ def _summarize_yoy_metric(industry_df: pd.DataFrame,
                           metric_col: str,
                           metric_name: str,
                           grade: str) -> Optional[dict]:
-
     if company_df is None or company_df.empty:
         return None
-
-    # Normalize frames
     comp = company_df.rename(columns={metric_col: "value"}).copy()
     comp["__fy_num__"] = comp["FY"].apply(_fy_to_num)
     comp = comp.dropna(subset=["__fy_num__", "value"]).sort_values("__fy_num__")
-
     if comp.empty:
         return None
 
-    # Keep industry medians for alignment
     ind = (industry_df[["FY", "p25", "p50", "p75"]].copy()
            if (industry_df is not None and not industry_df.empty)
            else pd.DataFrame(columns=["FY", "p25", "p50", "p75"]))
     ind["__fy_num__"] = ind["FY"].apply(_fy_to_num)
-
-    # Join on FY for last-bucket classification
     merged = pd.merge(comp[["FY", "__fy_num__", "value"]],
                       ind[["FY", "__fy_num__", "p25", "p50", "p75"]],
                       on=["FY", "__fy_num__"], how="left").sort_values("__fy_num__")
 
-    # Series stats
     vals = merged["value"].tolist()
-    fys = merged["FY"].astype(str).tolist()
-    n = len(vals)
-
+    fys  = merged["FY"].astype(str).tolist()
+    n    = len(vals)
     v_first = vals[0] if n >= 1 else None
-    v_last = vals[-1] if n >= 1 else None
+    v_last  = vals[-1] if n >= 1 else None
     cagr = _calc_cagr(v_first, v_last, max(1, n - 1))
 
-    # last YoY change (value and %), if at least 2 points
-    last_abs_chg = None
-    last_pct_chg = None
-    if n >= 2:
+    last_abs_chg = last_pct_chg = None
+    if n >= 2 and vals[-2] is not None:
         prev = vals[-2]
-        if prev is not None:
+        try:
             last_abs_chg = (v_last - prev) if v_last is not None else None
-            try:
-                last_pct_chg = (v_last / prev - 1.0) if (v_last is not None and prev not in (0, None)) else None
-            except Exception:
-                last_pct_chg = None
+            last_pct_chg = (v_last / prev - 1.0) if (v_last not in (None, 0) and prev not in (None, 0)) else None
+        except Exception:
+            last_pct_chg = None
 
-    # Above/below median on the last year (if p50 exists)
     last_row = merged.iloc[-1]
-    p25 = last_row.get("p25", None)
-    p50 = last_row.get("p50", None)
-    p75 = last_row.get("p75", None)
+    p25 = last_row.get("p25", None); p50 = last_row.get("p50", None); p75 = last_row.get("p75", None)
     above_median = None
-    if p50 is not None and pd.notna(p50) and v_last is not None and pd.notna(v_last):
+    if pd.notna(p50) and v_last is not None and pd.notna(v_last):
         above_median = (v_last >= p50)
 
-    # Last-year bucket for chip label in HTML (Healthy / Satisfactory / Needs Improvement)
     try:
         last_bucket = _classify_bucket(v_last, p25, p50, p75, grade)
     except Exception:
         last_bucket = "—"
 
-    # Small time series snapshot (trim to last 6 points for prompt compactness)
     show_k = 6
-    ts_fy = fys[-show_k:]
+    ts_fy  = fys[-show_k:]
     ts_val = vals[-show_k:]
-    # And medians for the same slice if present
-    ts_med = None
-    if "p50" in merged.columns:
-        ts_med = merged["p50"].tolist()[-show_k:]
+    ts_med = merged["p50"].tolist()[-show_k:] if "p50" in merged.columns else None
 
-    summary = {
+    return {
         "metric_name": metric_name,
-        "metric_col": metric_col,
-        "grade": grade,
-        "last_fy": str(last_row["FY"]),
-        "last_value": v_last,
+        "metric_col":  metric_col,
+        "grade":       grade,
+        "last_fy":     str(last_row["FY"]),
+        "last_value":  v_last,
         "last_bucket": last_bucket,
         "above_median": above_median,
         "last_abs_chg": last_abs_chg,
@@ -944,34 +921,22 @@ def _summarize_yoy_metric(industry_df: pd.DataFrame,
         "series_value": ts_val,
         "series_median": ts_med,
     }
-    return summary
 
 def _fmt_pct(x, places=1):
-    try:
-        return f"{x*100:.{places}f}%" if x is not None and pd.notna(x) else "NA"
-    except Exception:
-        return "NA"
+    try: return f"{x*100:.{places}f}%" if x is not None and pd.notna(x) else "NA"
+    except Exception: return "NA"
 
-def _build_yoy_analysis_prompt(company: str,
-                               exchange: str,
-                               industry: str,
-                               summaries: list[dict],
-                               currency: str = "") -> tuple[str, str]:
-    """
-    Focus the model on YoY trends and projected risks.
-    """
+def _build_yoy_analysis_prompt(company: str, exchange: str, industry: str,
+                               summaries: list[dict], currency: str = "") -> tuple[str, str]:
     system = (
         "You are an experienced financial analyst. "
         "Write a concise, management-ready analysis of YEAR-ON-YEAR trends and projected operational risks. "
         "Use clear, non-technical language (no investment advice). "
         "Prioritize metrics showing adverse trends vs industry medians or high volatility."
     )
-
-    # Compact, per-metric lines for the LLM
     lines = []
     for s in summaries:
-        if not s:
-            continue
+        if not s: continue
         line = (
             f"- {s['metric_name']}: "
             f"last_fy={s['last_fy']}, "
@@ -979,12 +944,11 @@ def _build_yoy_analysis_prompt(company: str,
             f"last_bucket={s['last_bucket']}, "
             f"vs_median={'above' if s['above_median'] else 'below' if s['above_median'] is not None else 'NA'}, "
             f"last_YoY={('NA' if s['last_abs_chg'] is None else f'{s['last_abs_chg']:.4g} {currency}')} "
-            f"({ _fmt_pct(s['last_pct_chg']) }), "
+            f"({_fmt_pct(s['last_pct_chg'])}), "
             f"CAGR={_fmt_pct(s['cagr'])}, "
             f"series_fy={','.join(map(str, s['series_fy']))}, "
             f"series_val={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_value'])}"
         )
-        # Include median series if available (kept short by last 6)
         if s.get("series_median") is not None:
             line += f", series_med={','.join('NA' if v is None else f'{v:.4g}' for v in s['series_median'])}"
         lines.append(line)
@@ -1001,7 +965,6 @@ def _build_yoy_analysis_prompt(company: str,
         "Keep to ~250–350 words. Avoid jargon."
     )
     return system, user
-
 
 # =============================================================================
 # GPT stubs (unchanged behavior)
