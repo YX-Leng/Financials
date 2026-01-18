@@ -15,6 +15,8 @@ import io
 import re
 from io import BytesIO
 from difflib import SequenceMatcher
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
@@ -502,7 +504,15 @@ def _clear_tab1_analysis():
     st.session_state.pop("fin_analysis_pdf_bytes", None)
 
 # Convert simple Markdown text to PDF bytes 
-def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
+
+def md_to_pdf_bytes(
+    md_text: str,
+    title: str = "",
+    author: str = "",
+    subheaders: Optional[Dict[str, str]] = None,  
+) -> bytes:
+    subheaders = subheaders or {}
+
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -511,14 +521,18 @@ def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
         author=author or "",
         leftMargin=16 * mm,
         rightMargin=16 * mm,
-        topMargin=18 * mm,
+        topMargin=24 * mm,   # a bit more top margin to fit header
         bottomMargin=18 * mm,
     )
+
     styles = getSampleStyleSheet()
+    # Tweak core styles slightly for better density
     body = styles["BodyText"]
+    body.leading = 14
     h2 = styles["Heading2"]
     h3 = styles["Heading3"]
 
+    # Build the story from Markdown-ish text (keeps your original parsing)
     elements = []
     bullets_acc = []
 
@@ -530,17 +544,14 @@ def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
             elements.append(Spacer(1, 6))
             bullets_acc = []
 
-    # Normalize newlines; split lines
     for raw in (md_text or "").splitlines():
         line = raw.rstrip()
 
-        # Empty line → paragraph break
         if not line.strip():
             flush_bullets()
             elements.append(Spacer(1, 6))
             continue
 
-        # Headings (#, ##, ###)
         if line.startswith("### "):
             flush_bullets()
             elements.append(Paragraph(line[4:].strip(), h3))
@@ -554,18 +565,74 @@ def md_to_pdf_bytes(md_text: str, title: str = "", author: str = "") -> bytes:
             elements.append(Paragraph(line[2:].strip(), h2))
             continue
 
-        # Bullets (- , * )
         if line.lstrip().startswith("- ") or line.lstrip().startswith("* "):
             bullets_acc.append(line.lstrip()[2:].strip())
             continue
 
-        # Normal paragraph with basic **bold** support
+        # Simple **bold** handling
         htmlish = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
         elements.append(Paragraph(htmlish, body))
 
     flush_bullets()
-    doc.build(elements)
+
+    # ---------- Page header painters ----------
+    def _draw_header(c: canvas.Canvas, doc_obj, *, first_page: bool):
+        """Draws the report header at the top margin."""
+        width, height = A4
+        x_left = doc.leftMargin
+        y_top = height - doc.topMargin + 10  # slightly above flow start
+
+        # Title
+        c.setFont("Helvetica-Bold", 14)
+        c.setFillColor(colors.black)
+        title_text = title or "Report"
+        c.drawString(x_left, y_top, title_text)
+
+        # Subheaders (stacked below title)
+        y = y_top - 14 - 4  # gap after title
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.HexColor("#374151"))
+
+        # Render as "Label: value" pairs in a single line if space allows; else wrap to 2 lines.
+        pairs = [f"{k}: {v}" for k, v in subheaders.items() if (k and v)]
+        if pairs:
+            line = "    •    ".join(pairs)  # lightweight separators
+            # If too long, split roughly in half
+            max_chars = 110
+            if len(line) <= max_chars or not (" • " in line):
+                c.drawString(x_left, y, line)
+                y -= 12
+            else:
+                # naive split to two rows
+                mid = len(pairs) // 2
+                l1 = "    •    ".join(pairs[:mid])
+                l2 = "    •    ".join(pairs[mid:])
+                c.drawString(x_left, y, l1)
+                y -= 12
+                c.drawString(x_left, y, l2)
+                y -= 12
+
+        # Thin divider line
+        y_div = (height - doc.topMargin) + 2
+        c.setStrokeColor(colors.HexColor("#e5e7eb"))
+        c.setLineWidth(0.8)
+        c.line(x_left, y_div, width - doc.rightMargin, y_div)
+
+        # Footer page number (optional, small and subtle)
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#6b7280"))
+        c.drawRightString(width - doc.rightMargin, 12 * mm, f"Page {doc.page}")
+
+    def _first_page(c, doc_obj):
+        _draw_header(c, doc_obj, first_page=True)
+
+    def _later_pages(c, doc_obj):
+        _draw_header(c, doc_obj, first_page=False)
+
+    # Build
+    doc.build(elements, onFirstPage=_first_page, onLaterPages=_later_pages)
     return buf.getvalue()
+
 
 def analysis_and_charts_to_html_bytes(
     analysis_md_text: str,
@@ -1732,7 +1799,7 @@ def main():
                 f"**Industry:** {ind} &nbsp;&nbsp; **FY:** {fy_sel}")
         
     tab_bm, tab_yoy, tab_audit, tab_wp, tab_obs = st.tabs(["1.Benchmarking (Selected FY)", "2.YoY Trend", "3.Suggested Top 3 Audit Areas",
-        "4.Audit Work Program", "5.Observations - Summary"
+        "4.Audit Work Program", "5.Observations Summary"
     ])
 
     # -------------------------------------------------------------------------
@@ -2182,8 +2249,13 @@ def main():
                     st.session_state["ai_audit_suggestions_pdf_bytes"] = md_to_pdf_bytes(
                         st.session_state["ai_audit_suggestions"],
                         title=f"{company} – Suggested Audit Areas ({fy_sel})",
-                        author="Auto-generated by the dashboard"
-                    )
+                        author="Auto-generated by the dashboard",
+                        subheaders={
+                            "Company": company,                          
+                            "Exchange": exch,                             
+                            "Industry": ind,                             
+                            "FY": str(fy_sel),                            
+                        })
 
                 st.download_button(
                     "Download Suggestions (.pdf)",
@@ -2390,7 +2462,7 @@ def main():
                         observations = []
 
                 if observations:
-                    st.success("Observations drafted.")
+                    st.success("Observations drafted. Refer to 5 - Observations Summary.")
                     if "audit_observations" not in st.session_state:
                         st.session_state["audit_observations"] = []
                     # Map snippet_id -> original file short name; then to saved path
@@ -2430,7 +2502,7 @@ def main():
     # -------------------------------------------------------------------------
 
     with tab_obs:
-        st.subheader("Audit Observations")
+        st.subheader("Audit Observations Summary")
 
         obs = st.session_state.get("audit_observations", "")
         if not obs:
