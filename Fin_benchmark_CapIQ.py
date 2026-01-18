@@ -1963,25 +1963,39 @@ def main():
         )
 
         if btn_yoy:
-            api_key_fin = _get_openai_api_key()
-            if not api_key_fin:
-                st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+            # 1) Show hard facts so you know what's missing
+            st.caption(
+                f"DEBUG: charts={len(yoy_figs)} · summaries={len([s for s in yoy_summaries if s])} · "
+                f"has__summarize={'_summarize_yoy_metric' in globals()} · "
+                f"has__build_prompt={'_build_yoy_analysis_prompt' in globals()}"
+            )
+
+            # 2) Check that your helpers really exist in this runtime
+            if "_build_yoy_analysis_prompt" not in globals():
+                st.error("YoY helper `_build_yoy_analysis_prompt` is missing. Add it above `main()`.")
+            elif "_summarize_yoy_metric" not in globals():
+                st.error("YoY helper `_summarize_yoy_metric` is missing. Add it above `main()`.")
             else:
+                # 3) Proceed only if you actually have at least one valid summary
                 valid_summaries = [s for s in yoy_summaries if s]
                 if not valid_summaries:
-                    st.warning("No YoY data available to analyze for the selected metrics type/company.")
+                    # You reached this branch because the helpers exist but produced no summaries.
+                    # Typical causes: company series empty after dropna(), name mismatch, or only industry series.
+                    st.warning(
+                        "No YoY summaries were built (company series may be empty/sparse). "
+                        "Verify the company name matches `ENTITY_NAME` exactly and that the metric has numeric values across ≥ 2 FY."
+                    )
                 else:
-                    currency_label = CURRENCY_BY_EXCHANGE.get(exch, "")
-                    try:
+                    # 4) Build the proper YoY prompt and call the model
+                    api_key_fin = _get_openai_api_key()
+                    if not api_key_fin:
+                        st.error("OpenAI API key is missing. Set it in Streamlit secrets or OPENAI_API_KEY.")
+                    else:
+                        currency_label = CURRENCY_BY_EXCHANGE.get(exch, "")
                         sys_p, usr_p = _build_yoy_analysis_prompt(
                             company=company, exchange=exch, industry=ind,
                             summaries=valid_summaries, currency=currency_label
                         )
-                    except NameError:
-                        st.error("YoY prompt helper `_build_yoy_analysis_prompt` is missing. Please add it.")
-                        sys_p, usr_p = None, None
-
-                    if sys_p and usr_p:
                         with st.spinner("Calling model and drafting YoY analysis..."):
                             yoy_text, yoy_err = _call_openai(
                                 sys_p, usr_p, api_key=api_key_fin, model=yoy_model, max_tokens=600
@@ -1989,10 +2003,11 @@ def main():
                         if yoy_err:
                             st.error(f"API Error: {yoy_err}")
                         elif yoy_text:
-                            st.session_state["yoy_analysis_text"] = yoy_text.strip()
+                            st.session_state["yoy_analysis_text"] = str(yoy_text).strip()
                             st.success("YoY analysis generated.")
                         else:
                             st.warning("No output received from the model. Try a smaller prompt or different model.")
+
 
         # Show analysis if present
         if st.session_state.get("yoy_analysis_text"):
