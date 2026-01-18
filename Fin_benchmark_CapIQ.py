@@ -1980,7 +1980,7 @@ def main():
             "Generate YoY Analysis",
             type="primary",
             key="btn_yoy_analysis",
-            disabled=(len([s for s in yoy_summaries if s]) == 0)
+            disabled=False)
         )
 
         if btn_yoy:
