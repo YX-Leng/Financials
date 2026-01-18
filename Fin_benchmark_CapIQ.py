@@ -841,17 +841,29 @@ def _plot_yoy(industry_df: pd.DataFrame, company_df: pd.DataFrame, metric: str, 
 # YoY helpers
 # =========================
 
-def _fy_to_num(x):
-    try: return float(str(x).strip())
-    except Exception: return None
 
-def _calc_cagr(v_first: float, v_last: float, n_years: int):
+def _fy_to_num(x) -> Optional[float]:
+    s = str(x or "").strip()
+    if s == "":
+        return None
+
+    # 1) 4-digit year anywhere in the string
+    m4 = re.search(r"(19|20)\d{2}", s)
+    if m4:
+        return float(m4.group(0))
+
+    # 2) 2-digit patterns like 'FY21', '21A' → map to 20xx for 00–79; 19xx for 80–99
+    m2 = re.search(r"(?<!\d)(\d{2})(?!\d)", s)
+    if m2:
+        yy = int(m2.group(1))
+        return float(2000 + yy) if yy <= 79 else float(1900 + yy)
+
+    # 3) Plain numeric string (last resort)
     try:
-        if v_first is None or v_last is None: return None
-        if v_first <= 0 or v_last <= 0 or n_years < 1: return None
-        return (v_last / v_first) ** (1.0 / n_years) - 1.0
+        return float(s)
     except Exception:
         return None
+
 
 def _summarize_yoy_metric(industry_df: pd.DataFrame,
                           company_df: pd.DataFrame,
@@ -860,38 +872,74 @@ def _summarize_yoy_metric(industry_df: pd.DataFrame,
                           grade: str) -> Optional[dict]:
     if company_df is None or company_df.empty:
         return None
+
+    # Expect shape: company_df has ['FY', <metric_col>]
     comp = company_df.rename(columns={metric_col: "value"}).copy()
+
+    # Try to get a sortable numeric FY; if all None, we use row order as a fallback
     comp["__fy_num__"] = comp["FY"].apply(_fy_to_num)
-    comp = comp.dropna(subset=["__fy_num__", "value"]).sort_values("__fy_num__")
+    if comp["__fy_num__"].notna().any():
+        # Keep rows that have either a parsed FY or at least a value; we'll sort by parsed FY
+        comp = comp.dropna(subset=["value"]).sort_values("__fy_num__", na_position="last")
+    else:
+        # Fallback: preserve incoming order and create a sequence index
+        comp = comp.dropna(subset=["value"]).reset_index(drop=True)
+        comp["__fy_num__"] = comp.index.astype(float)
+
     if comp.empty:
         return None
 
-    ind = (industry_df[["FY", "p25", "p50", "p75"]].copy()
-           if (industry_df is not None and not industry_df.empty)
-           else pd.DataFrame(columns=["FY", "p25", "p50", "p75"]))
-    ind["__fy_num__"] = ind["FY"].apply(_fy_to_num)
-    merged = pd.merge(comp[["FY", "__fy_num__", "value"]],
-                      ind[["FY", "__fy_num__", "p25", "p50", "p75"]],
-                      on=["FY", "__fy_num__"], how="left").sort_values("__fy_num__")
+    # Prepare industry medians (optional)
+    if industry_df is not None and not industry_df.empty:
+        ind = industry_df[["FY", "p25", "p50", "p75"]].copy()
+        ind["__fy_num__"] = ind["FY"].apply(_fy_to_num)
+        if ind["__fy_num__"].notna().any():
+            ind = ind.sort_values("__fy_num__", na_position="last")
+        else:
+            ind = ind.reset_index(drop=True)
+            ind["__fy_num__"] = ind.index.astype(float)
+    else:
+        ind = pd.DataFrame(columns=["FY", "p25", "p50", "p75", "__fy_num__"])
+
+    # Join on FY string equality; if that yields nothing at the last row, we still carry company-only
+    merged = pd.merge(
+        comp[["FY", "__fy_num__", "value"]],
+        ind[["FY", "__fy_num__", "p25", "p50", "p75"]],
+        on=["FY"], how="left", suffixes=("", "_ind")
+    ).sort_values("__fy_num__")
 
     vals = merged["value"].tolist()
     fys  = merged["FY"].astype(str).tolist()
     n    = len(vals)
+
     v_first = vals[0] if n >= 1 else None
     v_last  = vals[-1] if n >= 1 else None
+
+    def _calc_cagr(v_first: float, v_last: float, n_years: int):
+        try:
+            if v_first is None or v_last is None: return None
+            # CAGR only meaningful on positive bases
+            if v_first <= 0 or v_last <= 0 or n_years < 1: return None
+            return (v_last / v_first) ** (1.0 / n_years) - 1.0
+        except Exception:
+            return None
+
     cagr = _calc_cagr(v_first, v_last, max(1, n - 1))
 
     last_abs_chg = last_pct_chg = None
-    if n >= 2 and vals[-2] is not None:
+    if n >= 2 and vals[-2] is not None and v_last is not None:
         prev = vals[-2]
         try:
-            last_abs_chg = (v_last - prev) if v_last is not None else None
-            last_pct_chg = (v_last / prev - 1.0) if (v_last not in (None, 0) and prev not in (None, 0)) else None
+            last_abs_chg = v_last - prev
+            last_pct_chg = (v_last / prev - 1.0) if prev != 0 else None
         except Exception:
             last_pct_chg = None
 
     last_row = merged.iloc[-1]
-    p25 = last_row.get("p25", None); p50 = last_row.get("p50", None); p75 = last_row.get("p75", None)
+    p25 = last_row.get("p25", None)
+    p50 = last_row.get("p50", None)
+    p75 = last_row.get("p75", None)
+
     above_median = None
     if pd.notna(p50) and v_last is not None and pd.notna(v_last):
         above_median = (v_last >= p50)
@@ -907,18 +955,18 @@ def _summarize_yoy_metric(industry_df: pd.DataFrame,
     ts_med = merged["p50"].tolist()[-show_k:] if "p50" in merged.columns else None
 
     return {
-        "metric_name": metric_name,
-        "metric_col":  metric_col,
-        "grade":       grade,
-        "last_fy":     str(last_row["FY"]),
-        "last_value":  v_last,
-        "last_bucket": last_bucket,
-        "above_median": above_median,
-        "last_abs_chg": last_abs_chg,
-        "last_pct_chg": last_pct_chg,
-        "cagr": cagr,
-        "series_fy": ts_fy,
-        "series_value": ts_val,
+        "metric_name":   metric_name,
+        "metric_col":    metric_col,
+        "grade":         grade,
+        "last_fy":       str(last_row["FY"]),
+        "last_value":    v_last,
+        "last_bucket":   last_bucket,
+        "above_median":  above_median,
+        "last_abs_chg":  last_abs_chg,
+        "last_pct_chg":  last_pct_chg,
+        "cagr":          cagr,
+        "series_fy":     ts_fy,
+        "series_value":  ts_val,
         "series_median": ts_med,
     }
 
