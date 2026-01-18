@@ -1675,7 +1675,7 @@ def main():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.3 | 2026")
+    st.sidebar.caption("version 3.4 | 2026")
 
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
@@ -1981,7 +1981,6 @@ def main():
             type="primary",
             key="btn_yoy_analysis",
             disabled=False)
-        )
 
         if btn_yoy:
             api_key_fin = _get_openai_api_key()
