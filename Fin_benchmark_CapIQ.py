@@ -1829,6 +1829,8 @@ def main():
     # -------------------------------------------------------------------------
 
     with tab_bm:
+        st.subheader("Financial Metrics Benchmarking & Analysis")
+        st.caption("Compares the company’s selected-year metrics against industry percentiles to highlight strengths, pressure points, and outliers.")
         st.markdown(
             '<div class="legend">Legend: '
             '<span class="chip chip-green">Healthy</span>'
@@ -1912,12 +1914,8 @@ def main():
         ss["bm_figs"] = bm_figs
         
         st.divider()
-        st.subheader("Financial Metrics - Analysis")
-
         fin_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="bm_model")
-
         currency_label = ccy if 'ccy' in locals() else ""
-
         btn_fin = st.button(
             "Generate Analysis",
             type="primary",
@@ -1985,6 +1983,9 @@ def main():
     # -------------------------------------------------------------------------
 
     with tab_yoy:
+        st.subheader("YoY Trend & Analysis")
+        st.caption("Shows multi‑year company performance versus industry medians, surfacing any emerging risk signals over time.")
+
         # --- Header / selectors ---
         type_list2 = list(mtype_df["Type"].dropna().astype(str).unique().tolist())
         if st.session_state.get("mtype_yoy") in type_list2:
@@ -2087,7 +2088,6 @@ def main():
         # YoY ANALYSIS (GPT write-up)
         # ============================
         st.divider()
-        st.subheader("YoY Trend - Analysis")
         yoy_model = st.text_input("Model", os.environ.get("OPENAI_MODEL", "gpt-5"), key="yoy_model")
 
         btn_yoy = st.button(
