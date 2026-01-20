@@ -2405,34 +2405,89 @@ def main():
             submit_wp = st.button(
                 "Run Audit Test Steps & Draft Observations", type="primary", key=f"run_{sel_scope}_{sel_sub}",disabled=not docs_ok)
 
+            
             if submit_wp:
                 # 1) Save + parse files
                 os.makedirs("uploads", exist_ok=True)
+
+                # Gather files to process (Yes + non-null)
+                files_to_process = [
+                    (label, ans.get("file"))
+                    for label, ans in answers.items()
+                    if ans.get("have") == "Yes" and ans.get("file") is not None
+                ]
+
                 saved = []
                 parsed_docs = []
 
-                for label, ans in answers.items():
-                    file = ans.get("file")
-                    if ans.get("have") == "Yes" and file is not None:
-                        safe_name = f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}".replace(" ", "_")
-                        path = os.path.join("uploads", safe_name)
-                        with open(path, "wb") as f:
-                            f.write(file.getbuffer())
+                if not files_to_process:
+                    st.info("No documents were provided. You can still run, but results may be limited.")
+                else:
+                    # Nice multi-step UX
+                    with st.status("Processing uploaded documents…", expanded=True) as status:
+                        pbar = st.progress(0.0)
+                        total = len(files_to_process)
 
-                        text, meta = extract_text_from_upload(file)
-                        meta["label"] = label
-                        parsed_docs.append({"text": text, "meta": meta})
-                        saved.append({"label": label, "path": path, "original_name": file.name, "type": meta.get("type", "")})
+                        for idx, (label, file) in enumerate(files_to_process, start=1):
+                            # Show which file we are handling
+                            st.write(f"• Saving **{file.name}**")
+
+                            safe_name = (
+                                f"{int(time.time())}_{company}_{sel_scope}_{sel_sub}_{os.path.basename(file.name)}"
+                                .replace(" ", "_")
+                            )
+                            path = os.path.join("uploads", safe_name)
+                            try:
+                                with open(path, "wb") as f:
+                                    f.write(file.getbuffer())
+                            except Exception as e:
+                                st.warning(f"Could not save {file.name}: {e}")
+                                pbar.progress(min(idx / max(1, total), 1.0))
+                                continue
+
+                            # Parsing can be slow for large PDFs/XLSX—wrap with spinner
+                            with st.spinner(f"Extracting text from **{file.name}**…"):
+                                try:
+                                    text, meta = extract_text_from_upload(file)  # uses PyPDF2, python-docx, pandas
+                                except Exception as e:
+                                    text, meta = "", {"name": file.name, "type": "unknown", "error": str(e)}
+
+                            meta["label"] = label
+                            parsed_docs.append({"text": text, "meta": meta})
+                            saved.append({
+                                "label": label,
+                                "path": path,
+                                "original_name": file.name,
+                                "type": meta.get("type", "")
+                            })
+
+                            # Progress bar
+                            pbar.progress(min(idx / max(1, total), 1.0))
+
+                        status.update(label="Documents processed", state="complete")
 
                 # 2) Build concise evidence pack
-                evidence = build_relevant_excerpts(rec["Audit Test Steps"], parsed_docs)
+                with st.spinner("Ranking evidence snippets against audit test steps…"):
+                    try:
+                        evidence = build_relevant_excerpts(rec["Audit Test Steps"], parsed_docs)
+                    except Exception as e:
+                        evidence = []
+                        st.warning(f"Could not generate evidence snippets: {e}")
+
                 ev_lines = []
                 for j, ev in enumerate(evidence, start=1):
                     fname = ev["name"]
                     ev_lines.append(f"[snippet {j}] file={fname} · score={ev['score']:.2f}\n{ev['excerpt']}\n")
+
                 evidence_block = "\n".join(ev_lines) if ev_lines else "(no snippets extracted)"
 
-                # 3) Call OpenAI (reuses your existing helpers and model setting)
+                if not ev_lines:
+                    st.info(
+                        "No text snippets extracted from the uploaded files. "
+                        "Try uploading searchable PDFs (not scans), DOCX instead of legacy DOC, or CSV/XLSX with text content."
+                    )
+
+                # 3) Call OpenAI (reuse helpers & model setting)
                 model = os.environ.get("OPENAI_MODEL", st.session_state.get("audit_model", "gpt-5"))
                 api_key = _get_openai_api_key()
                 if not api_key:
@@ -2453,7 +2508,8 @@ def main():
                     "Return ONLY valid JSON of the shape:\n"
                     "{\n"
                     "  \"observations\": [\n"
-                    "    {\"observation\":\"...\", \"severity\":\"High|Medium|Low\", \"root_cause\":\"...\", \"recommendation\":\"...\", \"evidence_refs\":[{\"file\":\"...\",\"snippet_id\":1}]}\n"
+                    "    {\"observation\":\"...\", \"severity\":\"High|Medium|Low\", \"root_cause\":\"...\", "
+                    "\"recommendation\":\"...\", \"evidence_refs\":[{\"file\":\"...\",\"snippet_id\":1}]}\n"
                     "  ]\n"
                     "}\n"
                     "If there are no issues, return {\"observations\": []}."
@@ -2471,18 +2527,20 @@ def main():
                 )
 
                 with st.spinner("Calling model to analyze evidence and draft observations..."):
-                    text, err = _call_openai(system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=600)
+                    text, err = _call_openai(
+                        system_prompt, user_prompt, api_key=api_key, model=model, max_tokens=600
+                    )
 
-                # 4) Parse JSON, store for Tab 5
+                # 4) Parse JSON, store for Tab 5 (unchanged logic)
                 observations = []
                 if err:
                     st.error(f"OpenAI call failed: {err}")
                 else:
                     try:
-                        payload = text.strip()
+                        payload = (text or "").strip()
                         if payload.startswith("```"):
                             payload = payload.strip("`")
-                            payload = payload[payload.find("{"): payload.rfind("}")+1]
+                            payload = payload[payload.find("{"): payload.rfind("}") + 1]
                         out = json.loads(payload)
                         observations = out.get("observations", [])
                         if not isinstance(observations, list):
@@ -2495,7 +2553,8 @@ def main():
                     st.success("Observations drafted. Refer to 5 - Observations Summary.")
                     if "audit_observations" not in st.session_state:
                         st.session_state["audit_observations"] = []
-                    # Map snippet_id -> original file short name; then to saved path
+
+                    # Map snippet_id -> file short name; then to saved path
                     snippet_to_file = {}
                     for j, ev in enumerate(evidence, start=1):
                         snippet_to_file[j] = ev["name"]
@@ -2505,13 +2564,18 @@ def main():
                         refs = o.get("evidence_refs", []) or []
                         files_from_refs = []
                         for r in refs:
-                            sn = int(r.get("snippet_id", 0))
+                            try:
+                                sn = int(r.get("snippet_id", 0))
+                            except Exception:
+                                sn = 0
                             fname = snippet_to_file.get(sn)
                             if fname:
                                 match = next((s for s in saved if s["original_name"] == fname), None)
                                 files_from_refs.append(match["path"] if match else fname)
+
+                        # Fallback: attach all uploaded paths if refs are empty
                         if not files_from_refs:
-                            files_from_refs = [s["path"] for s in saved]  # fallback
+                            files_from_refs = [s["path"] for s in saved]
 
                         enriched.append({
                             "company": company, "exchange": exch, "industry": ind, "fy": str(fy_sel),
@@ -2522,10 +2586,10 @@ def main():
                             "recommendation": o.get("recommendation", ""),
                             "evidence_links": files_from_refs,
                         })
+
                     st.session_state["audit_observations"].extend(enriched)
                 else:
                     st.info("No issues drafted by the model; consider adding more evidence or refining steps.")
-
 
     # -------------------------------------------------------------------------
     # TAB 5 — Observations
