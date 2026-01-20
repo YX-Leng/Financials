@@ -1866,8 +1866,8 @@ def main():
         st.caption(f"Showing metrics for type: **{mtype}** ({len(subset)} metrics)")
 
         comp_slice = slice_company_row_for_fy(data_df, exch, ind, fy_sel, company)
-        co_size = str(comp_row.iloc[0]["Size"]) if not comp_row.empty else None
-        p_row = _try_get_percentile_row(pct_wide, pct_filter, exch, ind, fy_sel, co_size)
+        co_size = str(comp_slice.iloc[0]["Size"]) if not comp_slice.empty and "Size" in comp_slice.columns else None
+        p_row = _try_get_percentile_row(pct_filter, pct_wide, exch, ind, fy_sel, co_size)
 
         grid = st.columns(2)
         assembled_for_llm = []
@@ -2220,7 +2220,7 @@ def main():
             
         # Identify the benchmark/percentile row
         co_size = comp_row.iloc[0]["Size"] if not comp_row.empty else None
-        p_row = _try_get_percentile_row(pct_wide, pct_filter, exch, ind, str(fy_sel), co_size)
+        p_row = _try_get_percentile_row(pct_filter, pct_wide, exch, ind, str(fy_sel), co_size)
 
         # --- 2. PREPARE METRICS FOR THE HELPER ---
         all_metrics_to_rank = []
