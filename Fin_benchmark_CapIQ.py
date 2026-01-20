@@ -485,19 +485,26 @@ def read_key_financials_for(df_company: pd.DataFrame, prefer_fy: str) -> Dict[st
     return OUT
 
 
-def _try_get_percentile_row(pct_wide: pd.DataFrame, exch: str, ind: str, fy: str):
-    """Robust access to percentile row by attempting string and numeric FY keys."""
-    if pct_wide is None:
-        return None
+def _try_get_percentile_row(pct_size_df, pct_all_df, exch, ind, fy, size):
+    # 1. Try Granular Lookup (with Size)
+    if size and pd.notna(size) and size != "None":
+        try:
+            return pct_size_df.loc[(exch, ind, fy, size)]
+        except:
+            try:
+                # Try numeric FY conversion
+                return pct_size_df.loc[(exch, ind, float(fy), size)]
+            except:
+                pass # Continue to fallback
+    
+    # 2. Fallback: Try Broad Lookup (All sizes)
     try:
-        return pct_wide.loc[(exch, ind, fy)]
-    except Exception:
-        pass
-    try:
-        fy_num = float(fy) if fy is not None else None
-        return pct_wide.loc[(exch, ind, fy_num)]
-    except Exception:
-        return None
+        return pct_all_df.loc[(exch, ind, fy)]
+    except:
+        try:
+            return pct_all_df.loc[(exch, ind, float(fy))]
+        except:
+            return None
 
 # Clear Tab 1 analysis artifacts
 def _clear_tab1_analysis():
@@ -1655,7 +1662,8 @@ def main():
     # Prepare metrics and percentiles
     metric_cols = infer_metric_columns(data_df)
     data_df = to_numeric(data_df, metric_cols)
-    pct_wide, pct_tidy = compute_percentiles(data_df, metric_cols)
+    pct_wide, pct_tidy = compute_percentiles(data_df, metric_cols, group_cols=["EXCHANGE", "INDUSTRY", "FY"])
+    pct_filter = compute_percentiles(data_df, metric_cols, group_cols=["EXCHANGE", "INDUSTRY", "FY", "Size"])
 
     # --- Sidebar: Always-visible Company Input (with auto-population) ---
     
@@ -1773,7 +1781,7 @@ def main():
 
     # --- Footer ---
     st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-    st.sidebar.caption("version 3.5 | 2026")
+    st.sidebar.caption("version 3.6 | 2026")
 
     # Submit is disabled until all eight financial fields are numeric and identifiers are set
     can_submit = identifiers_ok and numeric_ok
@@ -1851,7 +1859,8 @@ def main():
         st.caption(f"Showing metrics for type: **{mtype}** ({len(subset)} metrics)")
 
         comp_slice = slice_company_row_for_fy(data_df, exch, ind, fy_sel, company)
-        p_row = _try_get_percentile_row(pct_wide, exch, ind, fy_sel)
+        co_size = str(comp_row.iloc[0]["Size"]) if not comp_row.empty else None
+        p_row = _try_get_percentile_row(pct_wide, pct_filter, exch, ind, fy_sel, co_size)
 
         grid = st.columns(2)
         assembled_for_llm = []
@@ -2203,7 +2212,8 @@ def main():
             comp_row = df_slice.iloc[[0]]
             
         # Identify the benchmark/percentile row
-        p_row = _try_get_percentile_row(pct_wide, exch, ind, str(fy_sel))
+        co_size = comp_row.iloc[0]["Size"] if not comp_row.empty else None
+        p_row = _try_get_percentile_row(pct_wide, pct_filter, exch, ind, str(fy_sel), co_size)
 
         # --- 2. PREPARE METRICS FOR THE HELPER ---
         all_metrics_to_rank = []
