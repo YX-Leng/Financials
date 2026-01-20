@@ -1731,7 +1731,7 @@ def main():
     suggestions = get_company_matches(df_suggest, typed_company) if typed_company else []
 
     if typed_company and suggestions and typed_company.strip() not in suggestions:
-        st.sidebar.caption("Suggestions: " + ", ".join(suggestions)
+        st.sidebar.caption("Suggestions: " + ", ".join(suggestions))
 
     # 4) Financial Year list
     if not df_company.empty:
