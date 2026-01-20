@@ -2521,7 +2521,7 @@ def main():
                     "- Identify potential observations (exceptions, control gaps, anomalies or missing evidence).\n"
                     "- Classify severity (High / Medium / Low).\n"
                     "- Propose a concise root cause and recommendation.\n"
-                    "- Where applicable, cite the evidence by file name and “snippet#”.\n\n"
+                    "- Where applicable, cite the evidence by the transaction ID or unique identifier(s).\n\n"
                     "Return ONLY valid JSON of the shape:\n"
                     "{\n"
                     "  \"observations\": [\n"
@@ -2541,6 +2541,7 @@ def main():
                     f"Audit Test Steps:\n{rec['Audit Test Steps']}\n\n"
                     f"Evidence Excerpts (top-ranked):\n{evidence_block}\n\n"
                     "Draft observations (if any). Use only the JSON schema specified."
+                    "Do not use acronyms or abbreviations in your response. Avoid external audit or generic compliance observations."
                 )
 
                 with st.spinner("Calling model to analyze evidence and draft observations..."):
