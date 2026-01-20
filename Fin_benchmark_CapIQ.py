@@ -1693,7 +1693,7 @@ def main():
 
     # 1) Company Name (first)
     typed_company = st.sidebar.text_input("Company Name", key="company_name_input")
-
+    suggestions_ph = st.sidebar.empty() 
 
     # Find exact company block (case-insensitive)
     df_company = find_exact_company(data_df, typed_company) if typed_company else pd.DataFrame()
@@ -1725,15 +1725,14 @@ def main():
 
     # Build a filtered view for suggestions
     df_suggest = data_df[
-        (data_df["EXCHANGE"].astype(str) == str(exchange)) &
-        (data_df["INDUSTRY"].astype(str) == str(industry))
-    ]
+        (data_df["EXCHANGE"].astype(str) == str(exchange))]
 
-    # Recompute suggestions with the filtered frame
     suggestions = get_company_matches(df_suggest, typed_company) if typed_company else []
 
     if typed_company and suggestions and typed_company.strip() not in suggestions:
-        st.sidebar.caption("Suggestions: " + ", ".join(suggestions))
+        suggestions_ph.caption("Suggestions: " + ", ".join(suggestions))
+    else:
+        suggestions_ph.empty()
 
     # 4) Financial Year list
     if not df_company.empty:
