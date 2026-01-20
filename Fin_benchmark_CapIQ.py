@@ -1694,10 +1694,6 @@ def main():
     # 1) Company Name (first)
     typed_company = st.sidebar.text_input("Company Name", key="company_name_input")
 
-    # Suggestions (up to 10)
-    suggestions = get_company_matches(data_df, typed_company) if typed_company else []
-    if typed_company and suggestions and typed_company.strip() not in suggestions:
-        st.sidebar.caption("Suggestions: " + ", ".join(suggestions))
 
     # Find exact company block (case-insensitive)
     df_company = find_exact_company(data_df, typed_company) if typed_company else pd.DataFrame()
@@ -1720,6 +1716,12 @@ def main():
         ind_list,
         index=(ind_list.index(default_industry) if default_industry in ind_list else 0)
     )
+
+    df_suggest = data_df[data_df["EXCHANGE"].astype(str) == str(exchange)]
+    suggestions = get_company_matches(df_suggest, typed_company) if typed_company else []
+    
+    if typed_company and suggestions and typed_company.strip() not in suggestions:
+        st.sidebar.caption("Suggestions: " + ", ".join(suggestions))
 
     # Build a filtered view for suggestions
     df_suggest = data_df[
