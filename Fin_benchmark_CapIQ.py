@@ -98,7 +98,7 @@ AUDIT_DB_SHEET = None
 
 CURRENCY_BY_EXCHANGE = {
     "SGX": "SGD", "NYSE": "USD", "NYSE ARCA": "USD", "NYSE MKT": "USD",
-    "BATS": "USD", "LSE": "GBP", "HKEX": "HKD", "Catalist": "SGD"
+    "BATS": "USD", "LSE": "GBP", "HKEX": "HKD", "Catalist": "SGD", "NASDAQ": "USD"
 }
 
 CHIP_CSS = """
